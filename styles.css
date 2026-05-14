@@ -879,6 +879,725 @@ button {
   width: fit-content;
 }
 
+.sidebar-nav {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.sidebar-tab-button {
+  display: grid;
+  gap: 0.18rem;
+  width: 100%;
+  padding: 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink);
+  text-align: left;
+  box-shadow: var(--shadow-soft);
+}
+
+.sidebar-tab-button span {
+  font-weight: 850;
+}
+
+.sidebar-tab-button small {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.sidebar-tab-button.active,
+.sidebar-tab-button:hover {
+  border-color: var(--teal);
+  background: var(--soft);
+}
+
+.patient-tool-page {
+  display: grid;
+  gap: 1rem;
+}
+
+.tool-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.8fr) minmax(0, 1.2fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.device-connect-card {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfdfc;
+}
+
+.device-connect-card h4 {
+  margin: 0;
+  font-size: 0.98rem;
+}
+
+.device-connect-card p {
+  margin: 0.24rem 0 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+.smartwatch-card {
+  border-color: rgba(53, 103, 181, 0.24);
+  background: linear-gradient(135deg, rgba(53, 103, 181, 0.08), #fbfdfc 54%);
+}
+
+.smartwatch-import-modal textarea {
+  min-height: 16rem;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 0.86rem;
+}
+
+.mental-health-panel {
+  display: grid;
+  gap: 1rem;
+}
+
+.mental-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(170px, 0.7fr) minmax(260px, 1.15fr);
+  gap: 0.8rem;
+}
+
+.mental-card,
+.breathing-panel,
+.mental-checkin-form {
+  padding: 0.95rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfdfc;
+}
+
+.mental-card {
+  display: grid;
+  gap: 0.35rem;
+  align-content: start;
+  min-height: 132px;
+}
+
+.mental-card span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.mental-card strong {
+  color: var(--ink);
+  font-size: clamp(1.05rem, 2vw, 1.55rem);
+  line-height: 1.18;
+}
+
+.mental-card small {
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.affirmation-card {
+  border-color: rgba(180, 90, 152, 0.22);
+  background: linear-gradient(135deg, rgba(180, 90, 152, 0.08), #fbfdfc 54%);
+}
+
+.mental-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(260px, 0.75fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.compact-header {
+  margin-bottom: 0.35rem;
+}
+
+.compact-header h3 {
+  font-size: 1rem;
+}
+
+.mental-slider-grid,
+.mental-question-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.mental-range-field input[type="range"] {
+  accent-color: var(--teal);
+  padding: 0;
+}
+
+.mental-range-field label strong {
+  color: var(--teal-dark);
+}
+
+.range-labels {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 750;
+}
+
+.mental-risk-check {
+  align-items: flex-start;
+  padding: 0.72rem;
+  border: 1px solid rgba(201, 68, 68, 0.24);
+  border-radius: 8px;
+  background: rgba(201, 68, 68, 0.06);
+}
+
+.breathing-panel {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.breathing-visual {
+  display: grid;
+  place-items: center;
+  min-height: 230px;
+  border: 1px solid rgba(17, 124, 115, 0.14);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(17, 124, 115, 0.08), transparent),
+    linear-gradient(180deg, #ffffff, #eef8f4);
+  overflow: hidden;
+}
+
+.breathing-circle {
+  width: 8.8rem;
+  height: 8.8rem;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: white;
+  background: radial-gradient(circle, #32c6b0 0%, var(--teal) 68%, #075d56 100%);
+  box-shadow: 0 18px 42px rgba(13, 118, 109, 0.24);
+  animation: breathingCycle 14s ease-in-out infinite;
+}
+
+.breathing-circle span {
+  font-weight: 900;
+}
+
+.breathing-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.4rem;
+}
+
+.breathing-steps span {
+  padding: 0.48rem;
+  border-radius: 8px;
+  color: var(--teal-dark);
+  background: var(--soft);
+  text-align: center;
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.mental-history {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.mental-history h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.mental-history-list {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.mental-history-item {
+  display: grid;
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.35fr) auto;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+}
+
+.mental-history-item strong,
+.mental-history-item small {
+  display: block;
+}
+
+.mental-history-item small,
+.mental-history-item p {
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.mental-history-item p {
+  margin: 0;
+}
+
+.crisis-notice {
+  border-color: rgba(201, 68, 68, 0.28);
+  background: #fff0f0;
+  color: #7e2424;
+}
+
+.wearable-insight-panel {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.9fr) minmax(260px, 0.8fr) minmax(260px, 1fr);
+  gap: 0.85rem;
+  align-items: start;
+  padding: 1rem;
+  border: 1px solid rgba(17, 124, 115, 0.16);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(241, 250, 247, 0.86)),
+    linear-gradient(90deg, rgba(17, 124, 115, 0.07), rgba(53, 103, 181, 0.06));
+  box-shadow: 0 12px 30px rgba(26, 48, 43, 0.07);
+}
+
+.wearable-insight-panel h3 {
+  margin: 0;
+  font-size: 1.04rem;
+}
+
+.wearable-insight-panel p:not(.eyebrow) {
+  margin: 0.3rem 0 0;
+  color: var(--muted);
+  line-height: 1.48;
+  font-size: 0.9rem;
+}
+
+.sensor-chip-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.sensor-insight-chip {
+  display: grid;
+  gap: 0.18rem;
+  min-height: 92px;
+  padding: 0.75rem;
+  border: 1px solid rgba(17, 124, 115, 0.14);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.76);
+}
+
+.sensor-insight-chip span {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.sensor-insight-chip strong {
+  color: var(--teal-dark);
+  font-size: 1.25rem;
+  line-height: 1.1;
+}
+
+.sensor-insight-chip small {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.wearable-advice {
+  margin: 0;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.wearable-advice ul {
+  padding-left: 1rem;
+}
+
+.cycle-sensor-panel {
+  border-color: rgba(216, 98, 76, 0.18);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(255, 248, 247, 0.88)),
+    linear-gradient(90deg, rgba(216, 98, 76, 0.08), rgba(180, 90, 152, 0.06));
+}
+
+.cycle-sensor-notes {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.sensor-note {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.72rem;
+  border: 1px solid rgba(216, 98, 76, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.74);
+}
+
+.sensor-note strong {
+  color: #8f4e61;
+  font-size: 0.86rem;
+}
+
+.sensor-note span {
+  color: #5f4b55;
+  font-size: 0.84rem;
+  line-height: 1.42;
+}
+
+.menstrual-health-panel {
+  display: grid;
+  gap: 1rem;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.94), rgba(255, 248, 247, 0.88)),
+    linear-gradient(90deg, rgba(216, 98, 76, 0.06), rgba(180, 90, 152, 0.06), rgba(17, 124, 115, 0.05));
+  overflow: hidden;
+}
+
+.cycle-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.cycle-card,
+.cycle-form {
+  padding: 0.95rem;
+  border: 1px solid rgba(216, 98, 76, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: 0 10px 26px rgba(85, 43, 57, 0.07);
+}
+
+.cycle-card {
+  display: grid;
+  align-content: start;
+  gap: 0.35rem;
+  min-height: 132px;
+}
+
+.cycle-card span {
+  color: #8f4e61;
+  font-size: 0.78rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.cycle-card strong {
+  color: #34212b;
+  font-size: clamp(1rem, 1.8vw, 1.42rem);
+  line-height: 1.18;
+}
+
+.cycle-card small {
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.cycle-phase-card {
+  border-color: rgba(216, 98, 76, 0.26);
+  background:
+    linear-gradient(135deg, rgba(216, 98, 76, 0.16), rgba(255, 255, 255, 0.92) 58%),
+    linear-gradient(90deg, rgba(180, 90, 152, 0.1), transparent);
+}
+
+.cycle-visual-grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) repeat(2, minmax(220px, 0.82fr));
+  gap: 0.9rem;
+}
+
+.cycle-visual-panel {
+  display: grid;
+  align-content: start;
+  gap: 0.8rem;
+  min-height: 300px;
+  padding: 1rem;
+  border: 1px solid rgba(180, 90, 152, 0.16);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(255, 251, 250, 0.88)),
+    radial-gradient(circle at 90% 0%, rgba(232, 160, 76, 0.18), transparent 12rem);
+  box-shadow: 0 12px 30px rgba(85, 43, 57, 0.08);
+}
+
+.cycle-visual-panel h3 {
+  margin: 0;
+  font-size: 1rem;
+  color: #34212b;
+}
+
+.cycle-visual-panel p {
+  margin: 0.25rem 0 0;
+  color: #7d6570;
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+.cycle-wheel {
+  --cycle-progress: 12%;
+  width: min(220px, 100%);
+  aspect-ratio: 1;
+  justify-self: center;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background:
+    conic-gradient(#d8624c 0 18%, #e8a04c 18% 36%, #117c73 36% 52%, #b45a98 52% 100%);
+  position: relative;
+  box-shadow: 0 18px 34px rgba(141, 63, 82, 0.16);
+}
+
+.cycle-wheel::before {
+  content: "";
+  position: absolute;
+  inset: -0.42rem;
+  border-radius: 50%;
+  background: conic-gradient(transparent 0 var(--cycle-progress), rgba(52, 33, 43, 0.22) var(--cycle-progress) calc(var(--cycle-progress) + 2.5%), transparent calc(var(--cycle-progress) + 2.5%) 100%);
+  z-index: 0;
+  pointer-events: none;
+}
+
+.cycle-wheel-inner {
+  width: 72%;
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 0.25rem;
+  padding: 1rem;
+  border-radius: 50%;
+  background: #fffdfa;
+  text-align: center;
+  position: relative;
+  z-index: 1;
+}
+
+.cycle-wheel-inner span {
+  color: #8f4e61;
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.cycle-wheel-inner strong {
+  color: #34212b;
+  font-size: 1rem;
+  line-height: 1.2;
+}
+
+.cycle-legend,
+.cycle-pie-legend {
+  display: grid;
+  gap: 0.42rem;
+}
+
+.cycle-legend {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.cycle-legend span,
+.cycle-pie-legend span {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: #5f4b55;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.cycle-legend i,
+.cycle-pie-legend i {
+  width: 0.72rem;
+  height: 0.72rem;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.legend-period {
+  background: #d8624c;
+}
+
+.legend-follicular {
+  background: #e8a04c;
+}
+
+.legend-fertile {
+  background: #117c73;
+}
+
+.legend-luteal {
+  background: #b45a98;
+}
+
+.cycle-pie-wrap {
+  display: grid;
+  grid-template-columns: minmax(132px, 0.72fr) minmax(0, 1fr);
+  gap: 0.85rem;
+  align-items: center;
+}
+
+.cycle-pie {
+  width: min(150px, 100%);
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  box-shadow: 0 14px 28px rgba(85, 43, 57, 0.14);
+}
+
+.cycle-pie > div {
+  width: 58%;
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  border-radius: 50%;
+  background: #fffdfa;
+}
+
+.cycle-pie strong,
+.cycle-pie span {
+  display: block;
+  color: #34212b;
+  line-height: 1;
+}
+
+.cycle-pie span {
+  margin-top: 0.2rem;
+  color: #8f4e61;
+  font-size: 0.72rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.cycle-pie-legend b {
+  margin-left: auto;
+  color: #34212b;
+}
+
+.cycle-empty-chart {
+  display: grid;
+  place-items: center;
+  min-height: 170px;
+  border: 1px dashed rgba(180, 90, 152, 0.28);
+  border-radius: 8px;
+  color: #7d6570;
+  background: rgba(255, 255, 255, 0.58);
+  text-align: center;
+  font-weight: 800;
+}
+
+.cycle-workspace {
+  display: grid;
+  grid-template-columns: minmax(360px, 0.82fr) minmax(0, 1.18fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.cycle-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.75rem;
+}
+
+.cycle-reminder-row {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.cycle-form input[type="range"] {
+  accent-color: var(--coral);
+  padding: 0;
+}
+
+.cycle-form label strong {
+  color: var(--coral);
+}
+
+.symptom-check-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(216, 98, 76, 0.04);
+}
+
+.symptom-check-grid legend {
+  padding: 0 0.35rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.cycle-history {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.cycle-history h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.cycle-history-list {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.cycle-history-item {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.45fr) auto;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+}
+
+.cycle-history-item strong,
+.cycle-history-item small {
+  display: block;
+}
+
+.cycle-history-item small,
+.cycle-history-item p {
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.cycle-history-item p {
+  margin: 0;
+}
+
+.cycle-alert {
+  border-color: rgba(216, 98, 76, 0.28);
+  background: #fff4f1;
+  color: #7c3427;
+}
+
+@keyframes breathingCycle {
+  0%,
+  100% {
+    transform: scale(0.78);
+  }
+
+  28%,
+  52% {
+    transform: scale(1.08);
+  }
+}
+
 .sidebar-fab {
   position: fixed;
   left: 1rem;
@@ -909,6 +1628,11 @@ button {
 .main-grid {
   display: grid;
   gap: 1rem;
+}
+
+.general-tracking-panel,
+.diagnosis-panel {
+  overflow: hidden;
 }
 
 .vitals-grid {
@@ -944,12 +1668,188 @@ button {
   color: var(--muted);
 }
 
+.telemetry-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  gap: 0.8rem;
+}
+
+.telemetry-card {
+  --domain-color: var(--teal);
+  --domain-soft: rgba(17, 124, 115, 0.1);
+  width: 100%;
+  text-align: left;
+  color: var(--ink);
+  cursor: pointer;
+  border-color: color-mix(in srgb, var(--domain-color) 45%, var(--line));
+  background: linear-gradient(180deg, var(--domain-soft), white 58%);
+  box-shadow: inset 0 4px 0 var(--domain-color), 0 6px 16px rgba(26, 48, 43, 0.045);
+  display: grid;
+  align-content: start;
+  gap: 0.28rem;
+}
+
+.telemetry-card:hover {
+  transform: translateY(-1px);
+  box-shadow: inset 0 4px 0 var(--domain-color), 0 10px 22px rgba(26, 48, 43, 0.09);
+}
+
+.telemetry-card strong {
+  font-size: clamp(1.35rem, 2.2vw, 1.9rem);
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+}
+
+.telemetry-card-status {
+  width: fit-content;
+  margin-top: 0.35rem;
+  padding: 0.24rem 0.5rem;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--domain-color) 12%, white);
+  color: var(--domain-color);
+  font-size: 0.72rem;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.telemetry-card-status.alert {
+  background: rgba(201, 68, 68, 0.1);
+  color: var(--red);
+}
+
+.telemetry-card-status.review,
+.telemetry-card-status.pending {
+  background: rgba(156, 118, 39, 0.12);
+  color: var(--gold);
+}
+
+.telemetry-card[data-domain="heart"] {
+  --domain-color: #d75a4a;
+  --domain-soft: rgba(215, 90, 74, 0.12);
+}
+
+.telemetry-card[data-domain="oxygen"] {
+  --domain-color: #117c73;
+  --domain-soft: rgba(17, 124, 115, 0.12);
+}
+
+.telemetry-card[data-domain="climate"] {
+  --domain-color: #b45a98;
+  --domain-soft: rgba(180, 90, 152, 0.12);
+}
+
+.telemetry-card[data-domain="muscle"] {
+  --domain-color: #9b6a21;
+  --domain-soft: rgba(155, 106, 33, 0.14);
+}
+
+.telemetry-card[data-domain="movement"] {
+  --domain-color: #6f8f2f;
+  --domain-soft: rgba(111, 143, 47, 0.14);
+}
+
+.telemetry-card[data-domain="sleep"] {
+  --domain-color: #3567b5;
+  --domain-soft: rgba(53, 103, 181, 0.12);
+}
+
+.telemetry-deep-dive {
+  display: grid;
+  gap: 1rem;
+  margin-top: 0;
+}
+
+.telemetry-detail-grid {
+  display: grid;
+  grid-template-columns: minmax(380px, 1.35fr) minmax(280px, 0.9fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.telemetry-chart {
+  min-height: 292px;
+}
+
+.telemetry-parameters {
+  display: grid;
+  gap: 0.55rem;
+  min-width: 0;
+}
+
+.telemetry-modal-card {
+  width: min(1120px, calc(100vw - 2rem));
+  max-height: calc(100vh - 2rem);
+  overflow: auto;
+}
+
+.parameter-row {
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+  min-width: 0;
+}
+
+.parameter-row summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.parameter-row summary::-webkit-details-marker {
+  display: none;
+}
+
+.parameter-row summary::after {
+  content: "Sensor basis";
+  display: inline-flex;
+  margin-top: 0.35rem;
+  color: var(--teal);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.parameter-row[open] summary::after {
+  content: "Hide basis";
+}
+
+.parameter-row span,
+.parameter-row small {
+  display: block;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 750;
+  overflow-wrap: anywhere;
+}
+
+.parameter-row small {
+  margin-top: 0.55rem;
+  line-height: 1.45;
+}
+
+.parameter-row strong {
+  display: block;
+  margin: 0.24rem 0;
+  font-size: 1.1rem;
+  overflow-wrap: anywhere;
+}
+
 .analysis-box {
   margin: 1rem 0;
   padding: 1rem;
   border-radius: 8px;
   background: #f3faf7;
   border: 1px solid #cfe7de;
+}
+
+.telemetry-diagnosis {
+  grid-column: 1 / -1;
+  margin: 0;
+  background: linear-gradient(180deg, #f8fcfa, #eef8f4);
+  border-color: #c9e4da;
+}
+
+.telemetry-diagnosis ul {
+  padding-left: 1.15rem;
 }
 
 .analysis-box h4 {
@@ -1014,6 +1914,262 @@ canvas {
   flex-wrap: wrap;
 }
 
+.doctor-tabs {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding: 0.35rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow-soft);
+}
+
+.doctor-tabs .tab span {
+  margin-left: 0.35rem;
+  padding: 0.12rem 0.42rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.doctor-report-list {
+  display: grid;
+  gap: 1rem;
+}
+
+.doctor-report-queue {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.doctor-report-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.1fr) minmax(160px, 0.9fr) auto;
+  gap: 0.75rem;
+  align-items: center;
+  width: 100%;
+  padding: 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfdfc;
+  color: var(--ink);
+  text-align: left;
+}
+
+.doctor-report-row:hover {
+  border-color: var(--teal);
+  box-shadow: 0 8px 20px rgba(26, 48, 43, 0.08);
+}
+
+.doctor-report-row small {
+  display: block;
+  margin-top: 0.2rem;
+  color: var(--muted);
+}
+
+.doctor-detail-page {
+  display: grid;
+  gap: 1rem;
+}
+
+.doctor-report-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfdfc;
+  padding: 1rem;
+}
+
+.doctor-assist-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(260px, 0.7fr);
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.doctor-chart-wrap {
+  min-height: 260px;
+}
+
+.wearable-timeline {
+  display: grid;
+  gap: 0.5rem;
+  max-height: 310px;
+  overflow: auto;
+  padding: 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+}
+
+.wearable-timeline h4 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.timeline-item {
+  display: grid;
+  gap: 0.15rem;
+  padding: 0.55rem 0;
+  border-top: 1px solid var(--line);
+}
+
+.timeline-item span,
+.timeline-item small {
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.clinical-review-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(280px, 0.75fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.clinical-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.clinical-summary-grid section,
+.clinical-response-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+  padding: 0.85rem;
+}
+
+.clinical-summary-grid h4 {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+}
+
+.clinical-summary-grid p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.clinical-summary-grid dl,
+.clinical-response-card dl {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+}
+
+.clinical-summary-grid dt,
+.clinical-response-card dt {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.clinical-summary-grid dd,
+.clinical-response-card dd {
+  margin: 0 0 0.35rem;
+  color: var(--ink);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.doctor-prescription-form {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.sidebar-tab {
+  border-color: color-mix(in srgb, var(--teal) 28%, var(--line));
+}
+
+.clinical-response-list {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.clinical-response-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.25rem;
+}
+
+.clinical-response-card small {
+  display: block;
+  margin-bottom: 0.55rem;
+  color: var(--muted);
+}
+
+.clinical-chatbox {
+  display: grid;
+  gap: 0.65rem;
+  margin-top: 0.9rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--line);
+}
+
+.clinical-chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.clinical-chat-header h4 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.clinical-chat-messages {
+  display: grid;
+  gap: 0.5rem;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.chat-message {
+  width: min(86%, 520px);
+  padding: 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f6faf8;
+}
+
+.chat-message.own {
+  justify-self: end;
+  background: #e8f5f1;
+  border-color: #c9e4da;
+}
+
+.chat-message strong,
+.chat-message small {
+  display: block;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.chat-message p {
+  margin: 0.25rem 0;
+  color: var(--ink);
+  line-height: 1.4;
+}
+
+.clinical-chat-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.5rem;
+}
+
+.clinical-chat-form input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.7rem 0.8rem;
+  color: var(--ink);
+  background: var(--field);
+}
+
 .notice {
   padding: 0.8rem;
   border-radius: 8px;
@@ -1052,6 +2208,8 @@ canvas {
 .modal-card {
   width: min(560px, 100%);
   padding: 1.25rem;
+  max-height: calc(100vh - 2rem);
+  overflow: auto;
 }
 
 .toast {
@@ -1106,6 +2264,26 @@ canvas {
 :root[data-theme="dark"] .metric,
 :root[data-theme="dark"] .profile-box,
 :root[data-theme="dark"] .alert-item,
+:root[data-theme="dark"] .doctor-tabs,
+:root[data-theme="dark"] .doctor-report-row,
+:root[data-theme="dark"] .sidebar-tab-button,
+:root[data-theme="dark"] .doctor-report-card,
+:root[data-theme="dark"] .clinical-summary-grid section,
+:root[data-theme="dark"] .clinical-response-card,
+:root[data-theme="dark"] .chat-message,
+:root[data-theme="dark"] .wearable-timeline,
+:root[data-theme="dark"] .parameter-row,
+:root[data-theme="dark"] .mental-card,
+:root[data-theme="dark"] .breathing-panel,
+:root[data-theme="dark"] .mental-checkin-form,
+:root[data-theme="dark"] .mental-history-item,
+:root[data-theme="dark"] .device-connect-card,
+:root[data-theme="dark"] .cycle-card,
+:root[data-theme="dark"] .cycle-form,
+:root[data-theme="dark"] .cycle-history-item,
+:root[data-theme="dark"] .wearable-insight-panel,
+:root[data-theme="dark"] .sensor-insight-chip,
+:root[data-theme="dark"] .sensor-note,
 :root[data-theme="dark"] .visual-chip {
   background: var(--panel);
   border-color: var(--line);
@@ -1118,6 +2296,8 @@ canvas {
 :root[data-theme="dark"] .choice-card small,
 :root[data-theme="dark"] .profile-box p,
 :root[data-theme="dark"] .metric small,
+:root[data-theme="dark"] .parameter-row small,
+:root[data-theme="dark"] .parameter-row span,
 :root[data-theme="dark"] .field label {
   color: var(--muted);
 }
@@ -1125,9 +2305,84 @@ canvas {
 :root[data-theme="dark"] .track-hero,
 :root[data-theme="dark"] .track-status-card,
 :root[data-theme="dark"] .profile-summary-item,
-:root[data-theme="dark"] .chart-wrap {
+:root[data-theme="dark"] .chart-wrap,
+:root[data-theme="dark"] .breathing-visual {
   background: #0d1f1c;
   border-color: var(--line);
+}
+
+:root[data-theme="dark"] .affirmation-card {
+  background: linear-gradient(135deg, rgba(180, 90, 152, 0.16), var(--panel) 60%);
+}
+
+:root[data-theme="dark"] .smartwatch-card {
+  background: linear-gradient(135deg, rgba(53, 103, 181, 0.18), var(--panel) 62%);
+}
+
+:root[data-theme="dark"] .cycle-phase-card {
+  background: linear-gradient(135deg, rgba(216, 98, 76, 0.16), var(--panel) 62%);
+}
+
+:root[data-theme="dark"] .menstrual-health-panel {
+  background:
+    linear-gradient(135deg, rgba(16, 34, 31, 0.95), rgba(34, 20, 28, 0.88)),
+    linear-gradient(90deg, rgba(216, 98, 76, 0.1), rgba(180, 90, 152, 0.1), rgba(17, 124, 115, 0.08));
+}
+
+:root[data-theme="dark"] .cycle-visual-panel,
+:root[data-theme="dark"] .cycle-wheel-inner,
+:root[data-theme="dark"] .cycle-pie > div,
+:root[data-theme="dark"] .cycle-empty-chart {
+  background: var(--panel);
+  border-color: var(--line);
+}
+
+:root[data-theme="dark"] .cycle-card strong,
+:root[data-theme="dark"] .cycle-visual-panel h3,
+:root[data-theme="dark"] .cycle-wheel-inner strong,
+:root[data-theme="dark"] .cycle-pie strong,
+:root[data-theme="dark"] .cycle-pie-legend b {
+  color: var(--ink);
+}
+
+:root[data-theme="dark"] .cycle-card span,
+:root[data-theme="dark"] .cycle-visual-panel p,
+:root[data-theme="dark"] .cycle-legend span,
+:root[data-theme="dark"] .cycle-pie-legend span,
+:root[data-theme="dark"] .cycle-empty-chart,
+:root[data-theme="dark"] .wearable-insight-panel p:not(.eyebrow),
+:root[data-theme="dark"] .sensor-note span {
+  color: var(--muted);
+}
+
+:root[data-theme="dark"] .wearable-advice {
+  background: var(--soft);
+}
+
+:root[data-theme="dark"] .sensor-note strong {
+  color: var(--coral);
+}
+
+:root[data-theme="dark"] .symptom-check-grid {
+  background: rgba(216, 98, 76, 0.1);
+  border-color: var(--line);
+}
+
+:root[data-theme="dark"] .cycle-alert {
+  background: #3d261f;
+  border-color: #704738;
+  color: #ffd6cc;
+}
+
+:root[data-theme="dark"] .mental-risk-check,
+:root[data-theme="dark"] .crisis-notice {
+  background: #442323;
+  border-color: #704040;
+  color: #ffd3d3;
+}
+
+:root[data-theme="dark"] .telemetry-card {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--domain-color) 18%, #10211e), var(--panel) 62%);
 }
 
 :root[data-theme="dark"] .general-choice::before {
@@ -1198,6 +2453,19 @@ canvas {
   .hero,
   .split,
   .dashboard-grid,
+  .doctor-report-row,
+  .doctor-assist-layout,
+  .tool-layout,
+  .mental-grid,
+  .mental-workspace,
+  .mental-history-item,
+  .cycle-grid,
+  .cycle-visual-grid,
+  .cycle-workspace,
+  .cycle-history-item,
+  .wearable-insight-panel,
+  .clinical-review-grid,
+  .clinical-summary-grid,
   .choice-grid,
   .track-hero,
   .symptom-grid,
@@ -1211,6 +2479,15 @@ canvas {
 
   .vitals-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .telemetry-grid,
+  .telemetry-detail-grid,
+  .mental-slider-grid,
+  .mental-question-grid,
+  .cycle-settings-grid,
+  .symptom-check-grid {
+    grid-template-columns: 1fr;
   }
 
   .track-hero::after {
@@ -1258,7 +2535,19 @@ canvas {
   }
 
   .visual-panel,
-  .vitals-grid {
+  .vitals-grid,
+  .telemetry-grid,
+  .mental-grid,
+  .mental-workspace,
+  .cycle-grid,
+  .cycle-visual-grid,
+  .cycle-workspace,
+  .cycle-history-item,
+  .cycle-pie-wrap,
+  .wearable-insight-panel,
+  .sensor-chip-grid,
+  .breathing-steps,
+  .clinical-chat-form {
     grid-template-columns: 1fr;
   }
 

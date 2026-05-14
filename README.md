@@ -36,19 +36,46 @@ The app can read the multi-line Serial output from the wearable sketch that prin
 - `ECG Signal Value: 1900`
 - `EMG Muscle Activity: 420`
 - `Skin Temperature: 36.8 °C`
+- `Temperature: 36.8 °C`
+- `Humidity: 55 %`
 - `Ambient Light Level: 830`
 - `Flex Sensor Value: 120`
 - `Force Sensor Value: 240`
 - `IR Sensor: Object Detected`
+- `MPU Accel: 120, -80, 16384`
+- `MPU Gyro: 20, 12, 5`
 - `ALERT: Sudden Motion / Possible Fall`
 
-The dashboard will show unsupported/missing values, such as SpO2 or blood pressure, as `--`.
+The dashboard uses a physiological interpretation pipeline for the sensors that are actually present. Directly measured values are shown when available, and missing clinical-grade channels are replaced with honest proxy scores:
+
+- Heart Health combines pulse raw, ECG signal, and detected BPM into cardiac signal quality.
+- Blood Oxygen shows real SpO2 only if a red/IR PPG sensor is present; otherwise it shows an oxygenation/perfusion proxy from pulse quality, temperature, and movement load.
+- Body Climate combines DHT11 temperature and humidity into climate comfort and thermal trend.
+- Muscle Vitality combines EMG, flex, and force into exertion and fatigue-style indicators.
+- Movement & Posture uses MPU raw values when printed, otherwise flex, force, IR, and motion alert text become a movement load proxy.
+- Sleep Environment combines LDR, movement load, and IR presence into rest-environment quality.
+
+Movement & Posture becomes more precise if the Arduino prints raw MPU lines such as `MPU Accel: ax, ay, az` and `MPU Gyro: gx, gy, gz`; motion alert text alone can still drive the proxy but cannot calculate true tilt angle, tremor Hz, or fall G-force.
 
 The app also still supports newline-delimited JSON:
 
 ```json
 {"heartRate":78,"spo2":98,"temperature":36.8,"systolic":122,"diastolic":78}
 ```
+
+For the modular telemetry dashboard, send one JSON object per line. It can be flat:
+
+```json
+{"bpm":78,"ecgSignal":[1810,1840,2300],"spo2":98,"ppgSignal":[1900,1960,2100],"surfaceTemp":36.8,"ambientTemp":25.5,"emgSignal":[220,260,410],"ax":120,"ay":-80,"az":16384,"gx":20,"gy":12,"gz":5,"lux":42}
+```
+
+Or grouped by domain:
+
+```json
+{"heart":{"bpm":78,"ecg":[1810,1840,2300]},"oxygen":{"spo2":98,"ppg":[1900,1960,2100]},"climate":{"surfaceTemp":36.8,"ambientTemp":25.5},"muscle":{"emg":[220,260,410]},"movement":{"ax":120,"ay":-80,"az":16384,"gx":20,"gy":12,"gz":5},"sleep":{"lux":42}}
+```
+
+The dashboard summarizes Heart Health, Blood Oxygen, Body Climate, Muscle Vitality, Movement & Posture, and Sleep Environment. Opening a domain card expands a deep dive with filtered Canvas signals, derived parameters, and ECG-to-PPG Pulse Transit Time when both streams are present.
 
 Use `esp32-serial-example.ino` as a starter sketch. You can also use sample monitoring inside the app for demo readings.
 

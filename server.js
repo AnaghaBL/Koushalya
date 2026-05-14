@@ -5,7 +5,7 @@ const path = require("node:path");
 const root = __dirname;
 const preferredPort = Number(process.env.PORT || 4173);
 const dataFile = path.join(root, "healthyone-data.json");
-const sharedKeys = ["users", "patients", "doctorApplications", "readings", "sentReports", "appointments", "healthCheckups"];
+const sharedKeys = ["users", "patients", "doctorApplications", "readings", "sentReports", "appointments", "healthCheckups", "clinicalResponses", "chatMessages"];
 
 const types = {
   ".html": "text/html; charset=utf-8",

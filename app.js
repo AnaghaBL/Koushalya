@@ -71,6 +71,7 @@ let activeAuth = "patient";
 let authMode = { patient: "login", doctor: "login" };
 let serialPort = null;
 let reader = null;
+let serialWearablePacket = null;
 let simulationTimer = null;
 let chartFrame = null;
 let patientStep = "home";
@@ -659,24 +660,44 @@ function adminDashboard() {
 }
 
 function vitals(reading) {
-  const safe = reading || { heartRate: "--", spo2: "--", temperature: "--", systolic: "--", diastolic: "--" };
+  const safe = reading || {};
+  const extraMetrics = [
+    reading?.ecg != null ? metric("ECG", reading.ecg, "raw signal value") : "",
+    reading?.emg != null ? metric("EMG", reading.emg, "muscle activity") : "",
+    reading?.pulseRaw != null ? metric("Pulse sensor", reading.pulseRaw, "raw analog value") : "",
+    reading?.light != null ? metric("Light", reading.light, reading.environment || "ambient level") : "",
+    reading?.flex != null ? metric("Flex", reading.flex, reading.flexState || "joint movement") : "",
+    reading?.force != null ? metric("Force", reading.force, reading.forceState || "pressure sensor") : "",
+    reading?.irState ? metric("IR", reading.irState, "object detection") : "",
+  ].join("");
   return `
     <div class="vitals-grid">
-      <div class="metric"><span>Pulse</span><strong>${safe.heartRate}</strong><small>heart beats per minute</small></div>
-      <div class="metric"><span>Breathing oxygen</span><strong>${safe.spo2}</strong><small>oxygen level in blood</small></div>
-      <div class="metric"><span>Body temperature</span><strong>${safe.temperature}</strong><small>Celsius</small></div>
-      <div class="metric"><span>Blood pressure</span><strong>${safe.systolic}/${safe.diastolic}</strong><small>pressure in arteries</small></div>
+      ${metric("Pulse", displayValue(safe.heartRate), "heart beats per minute")}
+      ${metric("Breathing oxygen", displayValue(safe.spo2), "oxygen level in blood")}
+      ${metric("Body temperature", displayValue(safe.temperature), "Celsius")}
+      ${metric("Blood pressure", `${displayValue(safe.systolic)}/${displayValue(safe.diastolic)}`, "pressure in arteries")}
+      ${extraMetrics}
     </div>
   `;
+}
+
+function metric(label, value, detail) {
+  return `<div class="metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(detail)}</small></div>`;
+}
+
+function displayValue(value) {
+  return value == null || Number.isNaN(Number(value)) ? "--" : value;
 }
 
 function alerts(reading) {
   if (!reading) return `<div class="notice">No readings yet. Connect your device or start simulation.</div>`;
   const issues = [];
-  if (reading.heartRate > 110 || reading.heartRate < 50) issues.push(`Your pulse is unusual: ${reading.heartRate} beats per minute`);
-  if (reading.spo2 < 94) issues.push(`Your breathing oxygen looks low: ${reading.spo2}%`);
-  if (reading.temperature > 38) issues.push(`Your body temperature is high: ${reading.temperature} C`);
-  if (reading.systolic > 140 || reading.diastolic > 90) issues.push(`Your blood pressure is high: ${reading.systolic}/${reading.diastolic}`);
+  if (Number.isFinite(reading.heartRate) && (reading.heartRate > 110 || reading.heartRate < 50)) issues.push(`Your pulse is unusual: ${reading.heartRate} beats per minute`);
+  if (Number.isFinite(reading.spo2) && reading.spo2 < 94) issues.push(`Your breathing oxygen looks low: ${reading.spo2}%`);
+  if (Number.isFinite(reading.temperature) && reading.temperature > 38) issues.push(`Your body temperature is high: ${reading.temperature} C`);
+  if ((Number.isFinite(reading.systolic) && reading.systolic > 140) || (Number.isFinite(reading.diastolic) && reading.diastolic > 90)) issues.push(`Your blood pressure is high: ${reading.systolic}/${reading.diastolic}`);
+  if (Number.isFinite(reading.emg) && reading.emg > 3000) issues.push(`Your muscle activity is high: ${reading.emg}`);
+  if (reading.motionAlerts?.length) issues.push(...reading.motionAlerts);
   if (!issues.length) return `<div class="notice">Everything looks okay in this demo check. Keep monitoring if you still feel unwell.</div>`;
   return `
     <div class="alert-list">
@@ -702,19 +723,35 @@ function aiAnalysisPanel(type, reading) {
 function analyzeReading(reading) {
   if (!reading) return [];
   const lines = [];
-  if (reading.heartRate >= 60 && reading.heartRate <= 100) lines.push("Your pulse is in the usual resting range for most adults.");
-  else if (reading.heartRate > 100) lines.push("Your pulse is faster than usual. This can happen with fever, anxiety, exercise, dehydration, or illness.");
-  else lines.push("Your pulse is slower than usual. This can be normal for some people, but dizziness or weakness should be checked.");
+  if (Number.isFinite(reading.heartRate)) {
+    if (reading.heartRate >= 60 && reading.heartRate <= 100) lines.push("Your pulse is in the usual resting range for most adults.");
+    else if (reading.heartRate > 100) lines.push("Your pulse is faster than usual. This can happen with fever, anxiety, exercise, dehydration, or illness.");
+    else lines.push("Your pulse is slower than usual. This can be normal for some people, but dizziness or weakness should be checked.");
+  } else if (Number.isFinite(reading.pulseRaw)) {
+    lines.push("The pulse sensor is connected, but a stable BPM has not been calculated yet. Keep your finger steady on the sensor.");
+  }
 
-  if (reading.spo2 >= 95) lines.push("Your breathing oxygen looks comfortable. Your blood appears to be carrying enough oxygen.");
-  else lines.push("Your oxygen reading is lower than expected. If you feel breathless, confused, blue around lips, or very weak, seek urgent help.");
+  if (Number.isFinite(reading.spo2)) {
+    if (reading.spo2 >= 95) lines.push("Your breathing oxygen looks comfortable. Your blood appears to be carrying enough oxygen.");
+    else lines.push("Your oxygen reading is lower than expected. If you feel breathless, confused, blue around lips, or very weak, seek urgent help.");
+  }
 
-  if (reading.temperature <= 37.5) lines.push("Your temperature does not suggest fever right now.");
-  else if (reading.temperature <= 38) lines.push("Your temperature is slightly raised. Rest and watch for worsening symptoms.");
-  else lines.push("Your temperature is high and may mean fever. A doctor should review it if it continues or you feel very unwell.");
+  if (Number.isFinite(reading.temperature)) {
+    if (reading.temperature <= 37.5) lines.push("Your temperature does not suggest fever right now.");
+    else if (reading.temperature <= 38) lines.push("Your temperature is slightly raised. Rest and watch for worsening symptoms.");
+    else lines.push("Your temperature is high and may mean fever. A doctor should review it if it continues or you feel very unwell.");
+  }
 
-  if (reading.systolic < 140 && reading.diastolic < 90) lines.push("Your blood pressure is not in the high range in this reading.");
-  else lines.push("Your blood pressure is high in this reading. Sit calmly and check again; repeated high readings should be shared with a doctor.");
+  if (Number.isFinite(reading.systolic) && Number.isFinite(reading.diastolic)) {
+    if (reading.systolic < 140 && reading.diastolic < 90) lines.push("Your blood pressure is not in the high range in this reading.");
+    else lines.push("Your blood pressure is high in this reading. Sit calmly and check again; repeated high readings should be shared with a doctor.");
+  }
+
+  if (Number.isFinite(reading.emg)) {
+    lines.push(reading.emg > 3000 ? "Muscle activity is high in this reading." : "Muscle activity is within the normal demo range.");
+  }
+  if (reading.motionAlerts?.length) lines.push(...reading.motionAlerts);
+  if (!lines.length) lines.push("Sensor data is arriving. Add more readings for a clearer health summary.");
   return lines;
 }
 
@@ -787,14 +824,20 @@ function personalizedAnalysisPanel(patient, reading) {
 function personalizedSensorNotes(patient, reading) {
   const notes = [];
   const profile = `${patient?.diseases || ""} ${patient?.symptoms || ""}`.toLowerCase();
-  if (profile.includes("asthma") || profile.includes("copd") || profile.includes("breath")) {
+  if (Number.isFinite(reading.spo2) && (profile.includes("asthma") || profile.includes("copd") || profile.includes("breath"))) {
     notes.push(`Because you mentioned breathing-related concerns, the oxygen reading is especially important. It is ${reading.spo2}%.`);
   }
   if (profile.includes("diabetes")) {
     notes.push("With diabetes, illness, fever, or unusual tiredness should be taken seriously. Share this report if symptoms continue.");
   }
-  if (profile.includes("blood pressure") || profile.includes("hypertension")) {
+  if (Number.isFinite(reading.systolic) && Number.isFinite(reading.diastolic) && (profile.includes("blood pressure") || profile.includes("hypertension"))) {
     notes.push(`Because high blood pressure is part of your profile, today's pressure of ${reading.systolic}/${reading.diastolic} should be tracked regularly.`);
+  }
+  if (Number.isFinite(reading.emg)) {
+    notes.push(`The wearable EMG muscle activity value is ${reading.emg}.`);
+  }
+  if (reading.motionAlerts?.length) {
+    notes.push(`Motion alerts from the wearable: ${reading.motionAlerts.join(", ")}.`);
   }
   if (patient?.medications) {
     notes.push("Your current medications are included so the doctor can check whether symptoms may be related to treatment or interactions.");
@@ -1494,10 +1537,18 @@ function reportHtml(report) {
     : "";
   const readingRows = report.reading
     ? `
-      <tr><td>Pulse</td><td>${report.reading.heartRate} beats per minute</td></tr>
-      <tr><td>Breathing oxygen</td><td>${report.reading.spo2}%</td></tr>
-      <tr><td>Body temperature</td><td>${report.reading.temperature} C</td></tr>
-      <tr><td>Blood pressure</td><td>${report.reading.systolic}/${report.reading.diastolic}</td></tr>
+      ${readingReportRow("Pulse", report.reading.heartRate, "beats per minute")}
+      ${readingReportRow("Breathing oxygen", report.reading.spo2, "%")}
+      ${readingReportRow("Body temperature", report.reading.temperature, "C")}
+      ${Number.isFinite(report.reading.systolic) && Number.isFinite(report.reading.diastolic) ? `<tr><td>Blood pressure</td><td>${report.reading.systolic}/${report.reading.diastolic}</td></tr>` : ""}
+      ${readingReportRow("Pulse sensor raw", report.reading.pulseRaw)}
+      ${readingReportRow("ECG signal", report.reading.ecg)}
+      ${readingReportRow("EMG muscle activity", report.reading.emg)}
+      ${readingReportRow("Ambient light", report.reading.light, report.reading.environment)}
+      ${readingReportRow("Flex sensor", report.reading.flex, report.reading.flexState)}
+      ${readingReportRow("Force sensor", report.reading.force, report.reading.forceState)}
+      ${report.reading.irState ? `<tr><td>IR sensor</td><td>${escapeHtml(report.reading.irState)}</td></tr>` : ""}
+      ${report.reading.motionAlerts?.length ? `<tr><td>Motion alerts</td><td>${escapeHtml(report.reading.motionAlerts.join(", "))}</td></tr>` : ""}
     `
     : "";
   const rows =
@@ -1532,6 +1583,11 @@ function reportHtml(report) {
   `;
 }
 
+function readingReportRow(label, value, suffix = "") {
+  if (!Number.isFinite(value)) return "";
+  return `<tr><td>${escapeHtml(label)}</td><td>${escapeHtml(value)}${suffix ? ` ${escapeHtml(suffix)}` : ""}</td></tr>`;
+}
+
 async function connectEsp32() {
   if (!("serial" in navigator)) {
     showModal("Web Serial unavailable", "Use Chrome or Edge on desktop, or start simulation to test the monitoring workflow.");
@@ -1542,7 +1598,7 @@ async function connectEsp32() {
     await serialPort.open({ baudRate: 115200 });
     markPatientConnected();
     readSerialLoop();
-    showModal("ESP32 connected", "Listening for newline-delimited JSON readings from the device.");
+    showModal("ESP32 connected", "Listening for your ESP32 wearable sensor output at 115200 baud.");
   } catch (error) {
     showModal("Connection cancelled", error.message || "The ESP32 connection was not opened.");
   }
@@ -1560,13 +1616,85 @@ async function readSerialLoop() {
     const lines = buffer.split("\n");
     buffer = lines.pop() || "";
     lines.forEach((line) => {
-      try {
-        addReading(JSON.parse(line));
-      } catch {
-        console.warn("Ignoring unreadable ESP32 packet", line);
-      }
+      handleSerialLine(line);
     });
   }
+}
+
+function handleSerialLine(line) {
+  const cleanLine = line.trim();
+  if (!cleanLine) return;
+
+  if (cleanLine.startsWith("{")) {
+    try {
+      addReading(JSON.parse(cleanLine));
+    } catch {
+      console.warn("Ignoring unreadable JSON packet", cleanLine);
+    }
+    return;
+  }
+
+  if (cleanLine.includes("SENSOR DATA")) {
+    serialWearablePacket = newWearablePacket();
+    return;
+  }
+
+  if (!serialWearablePacket) serialWearablePacket = newWearablePacket();
+  parseWearableLine(cleanLine, serialWearablePacket);
+
+  if (cleanLine.startsWith("======================================") && hasWearableReading(serialWearablePacket)) {
+    addReading(serialWearablePacket);
+    serialWearablePacket = null;
+    refreshAfterReading();
+  }
+}
+
+function newWearablePacket() {
+  return { source: "esp32-wearable", motionAlerts: [], time: new Date().toLocaleTimeString() };
+}
+
+function parseWearableLine(line, packet) {
+  const number = (pattern) => {
+    const match = line.match(pattern);
+    return match ? Number(match[1]) : null;
+  };
+
+  const pulseRaw = number(/^Pulse Sensor Value:\s*([\d.]+)/i);
+  if (pulseRaw != null) packet.pulseRaw = pulseRaw;
+
+  const heartRate = number(/^Heart Rate:\s*([\d.]+)\s*BPM/i);
+  if (heartRate != null) packet.heartRate = heartRate;
+
+  const ecg = number(/^ECG Signal Value:\s*([\d.]+)/i);
+  if (ecg != null) packet.ecg = ecg;
+
+  const emg = number(/^EMG Muscle Activity:\s*([\d.]+)/i);
+  if (emg != null) packet.emg = emg;
+
+  const temperature = number(/^Skin Temperature:\s*([\d.]+)/i);
+  if (temperature != null) packet.temperature = temperature;
+
+  const light = number(/^Ambient Light Level:\s*([\d.]+)/i);
+  if (light != null) packet.light = light;
+
+  const flex = number(/^Flex Sensor Value:\s*([\d.]+)/i);
+  if (flex != null) packet.flex = flex;
+
+  const force = number(/^Force Sensor Value:\s*([\d.]+)/i);
+  if (force != null) packet.force = force;
+
+  const motion = line.match(/^Motion Detected on ([XYZ])-axis \| Change Value:\s*([\d.]+)/i);
+  if (motion) packet.motionAlerts.push(`Motion on ${motion[1].toUpperCase()} axis (${motion[2]})`);
+
+  if (line.startsWith("Environment:")) packet.environment = line.replace("Environment:", "").trim();
+  if (line.includes("Finger/Joint")) packet.flexState = line;
+  if (line.includes("Pressure Applied") || line.includes("No Significant Pressure")) packet.forceState = line;
+  if (line.startsWith("IR Sensor:")) packet.irState = line.replace("IR Sensor:", "").trim();
+  if (line.startsWith("ALERT:")) packet.motionAlerts.push(line.replace("ALERT:", "").trim());
+}
+
+function hasWearableReading(packet) {
+  return ["heartRate", "pulseRaw", "ecg", "emg", "temperature", "light", "flex", "force"].some((key) => Number.isFinite(packet?.[key]));
 }
 
 function startSimulation() {
@@ -1606,17 +1734,49 @@ function simulatedReading() {
 }
 
 function addReading(reading) {
-  state.readings.push({
-    heartRate: Number(reading.heartRate),
-    spo2: Number(reading.spo2),
-    temperature: Number(reading.temperature),
-    systolic: Number(reading.systolic),
-    diastolic: Number(reading.diastolic),
+  const nextReading = {
+    source: reading.source || "demo",
+    heartRate: numericValue(reading.heartRate),
+    spo2: numericValue(reading.spo2),
+    temperature: numericValue(reading.temperature),
+    systolic: numericValue(reading.systolic),
+    diastolic: numericValue(reading.diastolic),
+    pulseRaw: numericValue(reading.pulseRaw),
+    ecg: numericValue(reading.ecg),
+    emg: numericValue(reading.emg),
+    light: numericValue(reading.light),
+    flex: numericValue(reading.flex),
+    force: numericValue(reading.force),
+    environment: reading.environment || "",
+    flexState: reading.flexState || "",
+    forceState: reading.forceState || "",
+    irState: reading.irState || "",
+    motionAlerts: Array.isArray(reading.motionAlerts) ? reading.motionAlerts : [],
     time: reading.time || new Date().toLocaleTimeString(),
-  });
-  state.readings = state.readings.filter((item) => Number.isFinite(item.heartRate)).slice(-40);
+  };
+  if (!hasAnySensorValue(nextReading)) return;
+  state.readings.push(nextReading);
+  state.readings = state.readings.filter(hasAnySensorValue).slice(-40);
   saveState();
   drawChart();
+}
+
+function refreshAfterReading() {
+  const modalOpen = Boolean(document.querySelector("#modal-root")?.children.length);
+  const activeTag = document.activeElement?.tagName;
+  const editing = ["INPUT", "TEXTAREA", "SELECT"].includes(activeTag);
+  if (!modalOpen && !editing) render();
+}
+
+function numericValue(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function hasAnySensorValue(reading) {
+  return ["heartRate", "spo2", "temperature", "systolic", "diastolic", "pulseRaw", "ecg", "emg", "light", "flex", "force"].some((key) =>
+    Number.isFinite(reading?.[key]),
+  );
 }
 
 function drawChart() {
@@ -1638,7 +1798,7 @@ function drawChart() {
     ctx.lineTo(width - 24, y);
     ctx.stroke();
   }
-  if (readings.length < 2) {
+  if (readings.length < 2 || !["heartRate", "spo2", "systolic", "temperature", "emg"].some((key) => readings.filter((reading) => Number.isFinite(reading[key])).length > 1)) {
     ctx.fillStyle = "#68747f";
     ctx.font = "26px Inter, sans-serif";
     ctx.fillText("Waiting for live readings", 40, 180);
@@ -1647,6 +1807,8 @@ function drawChart() {
   plotLine(ctx, readings, "heartRate", "#df6c55", 45, 130, width, height);
   plotLine(ctx, readings, "spo2", "#117c73", 88, 100, width, height);
   plotLine(ctx, readings, "systolic", "#3567b5", 95, 155, width, height);
+  plotLine(ctx, readings, "temperature", "#b45a98", 30, 45, width, height);
+  plotLine(ctx, readings, "emg", "#855f22", 0, 4095, width, height);
   ctx.fillStyle = "#172027";
   ctx.font = "22px Inter, sans-serif";
   ctx.fillText("Heart rate", 42, 32);
@@ -1654,9 +1816,15 @@ function drawChart() {
   ctx.fillText("Oxygen", 188, 32);
   ctx.fillStyle = "#3567b5";
   ctx.fillText("Systolic", 270, 32);
+  ctx.fillStyle = "#b45a98";
+  ctx.fillText("Temp", 370, 32);
+  ctx.fillStyle = "#855f22";
+  ctx.fillText("EMG", 440, 32);
 }
 
 function plotLine(ctx, readings, key, color, min, max, width, height) {
+  const points = readings.filter((reading) => Number.isFinite(reading[key]));
+  if (points.length < 2) return;
   const left = 42;
   const right = width - 36;
   const top = 50;
@@ -1664,8 +1832,8 @@ function plotLine(ctx, readings, key, color, min, max, width, height) {
   ctx.strokeStyle = color;
   ctx.lineWidth = 5;
   ctx.beginPath();
-  readings.forEach((reading, index) => {
-    const x = left + (index / (readings.length - 1)) * (right - left);
+  points.forEach((reading, index) => {
+    const x = left + (index / (points.length - 1)) * (right - left);
     const normalized = (Number(reading[key]) - min) / (max - min);
     const y = bottom - Math.max(0, Math.min(1, normalized)) * (bottom - top);
     if (index === 0) ctx.moveTo(x, y);

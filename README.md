@@ -27,7 +27,24 @@ Use the app through this local server when testing patient-to-doctor workflows. 
 
 ## ESP32 Data Format
 
-The app listens through Web Serial at `115200` baud. Send newline-delimited JSON:
+The app listens through Web Serial at `115200` baud. Use Chrome or Edge, open the app through `node server.js`, then click `Connect health device` and choose the ESP32 serial port.
+
+The app can read the multi-line Serial output from the wearable sketch that prints labels like:
+
+- `Pulse Sensor Value: 2380`
+- `Heart Rate: 82 BPM`
+- `ECG Signal Value: 1900`
+- `EMG Muscle Activity: 420`
+- `Skin Temperature: 36.8 °C`
+- `Ambient Light Level: 830`
+- `Flex Sensor Value: 120`
+- `Force Sensor Value: 240`
+- `IR Sensor: Object Detected`
+- `ALERT: Sudden Motion / Possible Fall`
+
+The dashboard will show unsupported/missing values, such as SpO2 or blood pressure, as `--`.
+
+The app also still supports newline-delimited JSON:
 
 ```json
 {"heartRate":78,"spo2":98,"temperature":36.8,"systolic":122,"diastolic":78}

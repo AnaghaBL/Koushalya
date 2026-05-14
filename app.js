@@ -605,6 +605,7 @@ function patientSidebar(user, patient) {
       <button class="button secondary" data-patient-step="home">Back to tracks</button>
       <nav class="sidebar-nav" aria-label="Patient tools">
         ${patientToolButton("device", "Health device", patient?.status || "not connected")}
+        ${patientToolButton("eye", "Eye test", eyeTestSidebarDetail(patient))}
         ${patientToolButton("mental", "Mental health", mentalHealthSidebarDetail(patient))}
         ${patientToolButton("menstrual", "Menstrual health", menstrualSidebarDetail(patient))}
         ${patientToolButton("schedule", "Care schedule", "checkups")}
@@ -627,6 +628,7 @@ function patientToolButton(tool, label, detail) {
 function patientToolPage(user, patient) {
   const pages = {
     device: patientDevicePage,
+    eye: patientEyeTestPage,
     mental: patientMentalHealthPage,
     menstrual: patientMenstrualHealthPage,
     schedule: patientSchedulePage,
@@ -739,6 +741,338 @@ function patientDiagnosisResponsesPage(user, patient) {
       </div>
     </div>
   `;
+}
+
+function patientEyeTestPage(user, patient) {
+  const latest = eyeTestEntries(patient)[0];
+  const triage = latest?.triage || eyeTriageFromSymptoms(latest?.symptoms || []);
+  return `
+    <div class="patient-tool-page">
+      <div class="panel eye-test-panel">
+        <div class="panel-header">
+          <div>
+            <h3>Eye test</h3>
+            <p>Nayana-inspired front eye screening and optical health scan for early eye-health awareness.</p>
+          </div>
+          <button class="button secondary small" data-action="close-patient-tool" type="button">Back to dashboard</button>
+        </div>
+        <div class="eye-hero-grid">
+          <section class="eye-hero-card">
+            <span>Screening path</span>
+            <strong>${escapeHtml(triage.type === "fundus" ? "Retinal review suggested" : "Front eye screening")}</strong>
+            <small>${escapeHtml(triage.reason || "Answer symptoms to decide the next step.")}</small>
+          </section>
+          <section class="eye-hero-card">
+            <span>Latest result</span>
+            <strong>${latest ? escapeHtml(latest.primaryFinding) : "No eye test yet"}</strong>
+            <small>${latest ? escapeHtml(latest.createdAt) : "Upload an eye photo and run screening."}</small>
+          </section>
+          <section class="eye-hero-card">
+            <span>Optical score</span>
+            <strong>${latest ? `${escapeHtml(latest.opticalScore)}/100` : "--"}</strong>
+            <small>Clarity, redness, brightness, and pupil/lens cues.</small>
+          </section>
+        </div>
+        <div class="eye-workspace">
+          ${eyeSymptomForm(patient)}
+          ${eyeImagePanel(patient)}
+        </div>
+        ${eyeResultsPanel(latest)}
+        ${eyeTestHistory(patient)}
+      </div>
+    </div>
+  `;
+}
+
+function eyeSymptomForm(patient) {
+  const latest = eyeTestEntries(patient)[0] || {};
+  const symptoms = Array.isArray(latest.symptoms) ? latest.symptoms : [];
+  const questions = eyeSymptomQuestions();
+  return `
+    <form class="form-grid eye-form" data-form="eye-test-symptoms">
+      <div class="panel-header compact-header">
+        <div>
+          <h3>1. Symptom triage</h3>
+          <p>Borrowed from Nayana's symptom-first screening flow.</p>
+        </div>
+      </div>
+      <fieldset class="eye-symptom-grid">
+        <legend>Select what you notice</legend>
+        ${questions.map((item) => `<label class="check-field"><input type="checkbox" name="symptoms" value="${escapeHtml(item.label)}" ${symptoms.includes(item.label) ? "checked" : ""} /> ${escapeHtml(item.question)}</label>`).join("")}
+      </fieldset>
+      <div class="field">
+        <label for="eye-note">Eye note</label>
+        <textarea id="eye-note" name="note" placeholder="Example: right eye red since yesterday, pain when moving eye, screen strain after work.">${escapeHtml(latest.note || "")}</textarea>
+      </div>
+      <button class="button secondary" type="submit">Save eye symptoms</button>
+    </form>
+  `;
+}
+
+function eyeImagePanel(patient) {
+  const image = patient?.eyeTestDraft?.imageData || "";
+  return `
+    <section class="eye-form eye-image-panel">
+      <div class="panel-header compact-header">
+        <div>
+          <h3>2. Front eye photo + optical scan</h3>
+          <p>Upload a clear front eye image. The browser estimates visible redness, clarity, brightness, pupil contrast, and lens haze.</p>
+        </div>
+      </div>
+      <div class="eye-upload-box ${image ? "has-image" : ""}">
+        ${image ? `<img src="${escapeHtml(image)}" alt="Uploaded eye preview" />` : `<div><strong>No eye photo selected</strong><span>Use a bright, steady, close front-eye photo.</span></div>`}
+      </div>
+      <div class="field">
+        <label for="eye-image-input">Eye image</label>
+        <input id="eye-image-input" type="file" accept="image/*" data-action="load-eye-image" />
+      </div>
+      <div class="table-actions">
+        <button class="button" data-action="run-eye-screening" type="button" ${image ? "" : "disabled"}>Run eye screening</button>
+        <button class="button secondary" data-action="clear-eye-image" type="button" ${image ? "" : "disabled"}>Clear image</button>
+        <button class="button secondary" data-action="find-eye-hospital" type="button">Find eye clinic</button>
+      </div>
+      <canvas id="eye-analysis-canvas" class="hidden" width="360" height="260"></canvas>
+    </section>
+  `;
+}
+
+function eyeResultsPanel(latest) {
+  if (!latest) return `<div class="notice">No eye screening result yet. Save symptoms, upload a front eye image, then run the scan.</div>`;
+  return `
+    <section class="eye-results-panel">
+      <div class="panel-header compact-header">
+        <div>
+          <h3>Screening result</h3>
+          <p>This is a preliminary screening aid, not a medical diagnosis.</p>
+        </div>
+        <span class="status ${latest.riskClass}">${escapeHtml(latest.riskLabel)}</span>
+      </div>
+      <div class="eye-score-grid">
+        ${sensorInsightChip("Redness", `${latest.metrics.redness}/100`, "front eye")}
+        ${sensorInsightChip("Clarity", `${latest.metrics.clarity}/100`, "focus")}
+        ${sensorInsightChip("Brightness", `${latest.metrics.brightness}/100`, "lighting")}
+        ${sensorInsightChip("Optical", `${latest.opticalScore}/100`, "lens scan")}
+      </div>
+      <div class="eye-condition-grid">
+        ${latest.conditions.map((item) => `<div class="eye-condition-row"><span>${escapeHtml(item.label)}</span><strong>${escapeHtml(item.score)}%</strong><i style="width:${escapeHtml(item.score)}%"></i></div>`).join("")}
+      </div>
+      <div class="analysis-box">
+        <h4>Recommendations</h4>
+        <ul>${latest.recommendations.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+      </div>
+    </section>
+  `;
+}
+
+function eyeTestHistory(patient) {
+  const entries = eyeTestEntries(patient);
+  if (!entries.length) return "";
+  return `
+    <div class="eye-history">
+      <h3>Eye screening history</h3>
+      <div class="eye-history-list">
+        ${entries
+          .slice(0, 6)
+          .map(
+            (entry) => `
+              <article class="eye-history-item">
+                <div>
+                  <strong>${escapeHtml(entry.primaryFinding)}</strong>
+                  <small>${escapeHtml(entry.createdAt)}</small>
+                </div>
+                <p>${escapeHtml(entry.triage.reason)}</p>
+                <span class="status ${entry.riskClass}">${escapeHtml(entry.riskLabel)}</span>
+              </article>
+            `,
+          )
+          .join("")}
+      </div>
+    </div>
+  `;
+}
+
+function eyeSymptomQuestions() {
+  return [
+    { question: "Redness in the eye", label: "Redness" },
+    { question: "Swollen or puffy eye", label: "Swelling" },
+    { question: "Yellowing of the white part", label: "Yellowing" },
+    { question: "Cloudy or blurry vision", label: "Blurred Vision" },
+    { question: "Eyelid drooping", label: "Eyelid Drooping" },
+    { question: "Pain inside the eye", label: "Eye Pain" },
+    { question: "Flashes, floaters, or moving spots", label: "Floaters" },
+    { question: "Difficulty seeing at night", label: "Night Blindness" },
+    { question: "Itching or irritation", label: "Itching" },
+    { question: "Watering or discharge", label: "Watering" },
+    { question: "Headaches near the eyes", label: "Headache" },
+    { question: "Dry or gritty eyes", label: "Dryness" },
+    { question: "Eye strain after reading/screens", label: "Eye Fatigue" },
+    { question: "Double vision", label: "Double Vision" },
+    { question: "Light sensitivity or halos", label: "Halos" },
+    { question: "Sudden vision change", label: "Sudden Vision Loss" },
+    { question: "Loss of side vision", label: "Tunnel Vision" },
+    { question: "Pain when moving the eye", label: "Pain On Movement" },
+  ];
+}
+
+function eyeTriageFromSymptoms(symptoms = []) {
+  const fundusTriggers = new Set(["Eye Pain", "Floaters", "Night Blindness", "Sudden Vision Loss", "Tunnel Vision", "Pain On Movement"]);
+  const trigger = symptoms.find((symptom) => fundusTriggers.has(symptom));
+  return trigger ? { type: "fundus", reason: `Flagged: ${trigger}` } : { type: "front", reason: symptoms.length ? "No internal red-flag symptoms selected" : "No symptoms saved yet" };
+}
+
+function eyeTestEntries(patient) {
+  return Array.isArray(patient?.eyeTestEntries) ? [...patient.eyeTestEntries].reverse() : [];
+}
+
+function eyeTestSidebarDetail(patient) {
+  const latest = eyeTestEntries(patient)[0];
+  return latest ? latest.riskLabel : "screening";
+}
+
+function saveEyeSymptoms(form) {
+  const patient = state.patients.find((item) => item.id === currentUser()?.id);
+  if (!patient) return;
+  const data = new FormData(form);
+  patient.eyeTestDraft = {
+    ...(patient.eyeTestDraft || {}),
+    symptoms: data.getAll("symptoms").map(String),
+    note: String(data.get("note") || "").trim(),
+    updatedAt: new Date().toLocaleString(),
+  };
+  saveState();
+  render();
+  showToast("Eye symptoms saved");
+}
+
+function loadEyeImage(file) {
+  const patient = state.patients.find((item) => item.id === currentUser()?.id);
+  if (!patient || !file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    patient.eyeTestDraft = { ...(patient.eyeTestDraft || {}), imageData: String(reader.result || ""), imageName: file.name };
+    saveState();
+    render();
+    showToast("Eye photo loaded");
+  };
+  reader.readAsDataURL(file);
+}
+
+function clearEyeImage() {
+  const patient = state.patients.find((item) => item.id === currentUser()?.id);
+  if (!patient?.eyeTestDraft) return;
+  patient.eyeTestDraft.imageData = "";
+  saveState();
+  render();
+}
+
+function runEyeScreening() {
+  const patient = state.patients.find((item) => item.id === currentUser()?.id);
+  const draft = patient?.eyeTestDraft || {};
+  if (!patient || !draft.imageData) {
+    showModal("Upload eye photo", "Add a clear front eye image before running the screening.");
+    return;
+  }
+  analyzeEyeImage(draft.imageData)
+    .then((metrics) => {
+      const result = buildEyeScreeningResult(draft, metrics);
+      patient.eyeTestEntries = [...(Array.isArray(patient.eyeTestEntries) ? patient.eyeTestEntries : []), result].slice(-20);
+      saveState();
+      render();
+      showToast("Eye screening complete");
+    })
+    .catch(() => showModal("Could not scan image", "Try another clear eye image with better lighting."));
+}
+
+function analyzeEyeImage(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => {
+      const canvas = document.querySelector("#eye-analysis-canvas") || document.createElement("canvas");
+      canvas.width = 360;
+      canvas.height = 260;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+      const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      let redBias = 0;
+      let brightnessSum = 0;
+      let yellowBias = 0;
+      let contrastSum = 0;
+      let darkPixels = 0;
+      let previous = null;
+      const count = data.length / 4;
+      for (let index = 0; index < data.length; index += 4) {
+        const r = data[index];
+        const g = data[index + 1];
+        const b = data[index + 2];
+        const brightness = (r + g + b) / 3;
+        brightnessSum += brightness;
+        redBias += Math.max(0, r - (g + b) / 2);
+        yellowBias += Math.max(0, (r + g) / 2 - b);
+        if (brightness < 55) darkPixels += 1;
+        if (previous != null) contrastSum += Math.abs(brightness - previous);
+        previous = brightness;
+      }
+      const redness = Math.round(Math.max(0, Math.min(100, (redBias / count / 70) * 100)));
+      const brightness = Math.round(Math.max(0, Math.min(100, (brightnessSum / count / 255) * 100)));
+      const clarity = Math.round(Math.max(0, Math.min(100, (contrastSum / count / 24) * 100)));
+      const yellowing = Math.round(Math.max(0, Math.min(100, (yellowBias / count / 80) * 100)));
+      const pupilContrast = Math.round(Math.max(0, Math.min(100, (darkPixels / count / 0.22) * 100)));
+      resolve({ redness, brightness, clarity, yellowing, pupilContrast });
+    };
+    image.onerror = reject;
+    image.src = dataUrl;
+  });
+}
+
+function buildEyeScreeningResult(draft, metrics) {
+  const symptoms = Array.isArray(draft.symptoms) ? draft.symptoms : [];
+  const triage = eyeTriageFromSymptoms(symptoms);
+  const cataract = Math.round(Math.max(metrics.yellowing * 0.55, 100 - metrics.clarity) * 0.72);
+  const conjunctivitis = Math.round(Math.max(metrics.redness, symptoms.includes("Redness") ? 68 : 0));
+  const eyelid = symptoms.includes("Swelling") || symptoms.includes("Eyelid Drooping") ? 66 : Math.round(metrics.pupilContrast > 85 ? 35 : 12);
+  const uveitis = symptoms.includes("Eye Pain") || symptoms.includes("Light Sensitivity") || symptoms.includes("Pain On Movement") ? 72 : Math.round(metrics.redness * 0.35);
+  const normal = Math.max(5, 100 - Math.max(cataract, conjunctivitis, eyelid, uveitis));
+  const conditions = [
+    { label: "Normal", score: normal },
+    { label: "Redness / Conjunctivitis", score: Math.min(98, conjunctivitis) },
+    { label: "Cataract / Lens haze cue", score: Math.min(98, cataract) },
+    { label: "Eyelid condition", score: Math.min(98, eyelid) },
+    { label: "Uveitis warning cue", score: Math.min(98, uveitis) },
+  ].sort((a, b) => b.score - a.score);
+  const opticalScore = Math.round(Math.max(0, Math.min(100, metrics.clarity * 0.35 + (100 - metrics.redness) * 0.25 + metrics.brightness * 0.2 + (100 - metrics.yellowing) * 0.2)));
+  const primaryFinding = conditions[0].label;
+  const recommendations = eyeRecommendations({ symptoms, triage, metrics, conditions, opticalScore });
+  const highest = conditions[0].score;
+  const riskClass = triage.type === "fundus" || highest > 70 || opticalScore < 45 ? "alert" : highest > 45 || opticalScore < 65 ? "review" : "normal";
+  const riskLabel = riskClass === "alert" ? "Eye review" : riskClass === "review" ? "Monitor" : "Stable";
+  return {
+    id: uid("eye"),
+    createdAt: new Date().toLocaleString(),
+    symptoms,
+    note: draft.note || "",
+    triage,
+    metrics,
+    opticalScore,
+    conditions,
+    primaryFinding,
+    recommendations,
+    riskClass,
+    riskLabel,
+  };
+}
+
+function eyeRecommendations(result) {
+  const recommendations = [];
+  const top = result.conditions[0];
+  if (result.triage.type === "fundus") recommendations.push(`Nayana triage suggests retinal/fundus review because ${result.triage.reason.toLowerCase()}.`);
+  if (top.label.includes("Conjunctivitis") && top.score > 40) recommendations.push("Possible conjunctivitis/redness cue: avoid touching the eyes and seek care if it persists beyond 2 days or there is pain/discharge.");
+  if (top.label.includes("Cataract") && top.score > 40) recommendations.push("Possible lens haze/cataract cue: schedule a detailed eye examination with an ophthalmologist.");
+  if (top.label.includes("Uveitis") && top.score > 40) recommendations.push("Possible uveitis warning cue: eye pain with redness or light sensitivity needs prompt medical review.");
+  if (top.label.includes("Eyelid") && top.score > 40) recommendations.push("Eyelid swelling/droop cue: review for stye, allergy, infection, or nerve-related causes if persistent.");
+  if (result.metrics.clarity < 35) recommendations.push("Image clarity is low. Repeat with steady focus and brighter, even lighting before relying on this result.");
+  if (!recommendations.length) recommendations.push("No strong warning cue found in this screening. Continue routine eye care and repeat if symptoms change.");
+  recommendations.push("This browser screening is informational and does not replace an optometrist or ophthalmologist.");
+  return recommendations;
 }
 
 function patientMentalHealthPage(user, patient) {

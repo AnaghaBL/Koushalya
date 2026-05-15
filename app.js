@@ -20,7 +20,18 @@
 
 const STORAGE_KEY = "healthyone-state-v1";
 const THEME_KEY = "healthyone-theme";
-const SHARED_STATE_KEYS = ["users", "patients", "doctorApplications", "readings", "sentReports", "appointments", "healthCheckups", "clinicalResponses", "chatMessages"];
+const SHARED_STATE_KEYS = [
+  "users",
+  "patients",
+  "doctorApplications",
+  "readings",
+  "sentReports",
+  "appointments",
+  "healthCheckups",
+  "clinicalResponses",
+  "chatMessages",
+  "eyeTrainingSamples",
+];
 
 const seedState = {
   currentUser: null,
@@ -84,6 +95,7 @@ const seedState = {
   healthCheckups: [],
   clinicalResponses: [],
   chatMessages: [],
+  eyeTrainingSamples: [],
 };
 
 let state = loadState();
@@ -99,11 +111,18 @@ let chartFrame = null;
 let patientStep = "home";
 let patientSidebarOpen = true;
 let activePatientTool = null;
+let activeRecordsRange = "daily";
 let personalizedEditorOpen = false;
 let activeTelemetryDomain = "heart";
 let activeDoctorTab = "pending-reports";
 let selectedDoctorReportId = null;
 let recognition = null;
+let activeVoiceTargetId = null;
+let voiceShouldKeepListening = false;
+let voiceRestartTimer = null;
+let voiceSessionToken = 0;
+let activeVoiceDraft = null;
+let eyeCameraStream = null;
 
 const app = document.querySelector("#app");
 let theme = localStorage.getItem(THEME_KEY) || "light";
@@ -133,6 +152,7 @@ function normalizeState(nextState) {
   nextState.healthCheckups = Array.isArray(nextState.healthCheckups) ? nextState.healthCheckups : [];
   nextState.clinicalResponses = Array.isArray(nextState.clinicalResponses) ? nextState.clinicalResponses : [];
   nextState.chatMessages = Array.isArray(nextState.chatMessages) ? nextState.chatMessages : [];
+  nextState.eyeTrainingSamples = Array.isArray(nextState.eyeTrainingSamples) ? nextState.eyeTrainingSamples : [];
   if (!nextState.users.some((user) => user.role === "admin" && user.email === "admin@koushalya.health")) {
     nextState.users.unshift(structuredClone(seedState.users[0]));
   }
@@ -141,7 +161,7 @@ function normalizeState(nextState) {
 
 function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  saveSharedState();
+  return saveSharedState();
 }
 
 function sharedStateSnapshot() {
@@ -231,6 +251,11 @@ function escapeHtml(value = "") {
     .replaceAll("'", "&#039;");
 }
 
+function displayClinicalNote(value = "") {
+  const text = String(value || "").trim();
+  return /^i have headache$/i.test(text) ? "" : text;
+}
+
 // ============================================================================
 // 3. App shell, authentication, and dashboards
 // ============================================================================
@@ -261,7 +286,7 @@ function topbar(user) {
       <div class="brand">
         ${
           user
-            ? `<button class="back-button" data-action="go-back" aria-label="Go back">←</button>`
+            ? `<button class="back-button" data-action="go-back" aria-label="Go back">${backArrowIcon()}</button>`
             : ""
         }
         <div class="brand-mark" aria-hidden="true">${brandLogo()}</div>
@@ -273,7 +298,7 @@ function topbar(user) {
       <div class="top-actions">
         ${
           user
-            ? `<span class="status ${user.role === "doctor" ? user.verification : "approved"}">${escapeHtml(user.role)}</span>
+            ? `<span class="status ${user.role === "doctor" ? user.verification : "approved"}">${escapeHtml(roleDisplayName(user))}</span>
                <button class="button secondary small theme-toggle" data-action="toggle-theme" type="button">${theme === "dark" ? "Light mode" : "Dark mode"}</button>
                <button class="button secondary small" data-action="logout">Log out</button>`
             : `<button class="button secondary small theme-toggle" data-action="toggle-theme" type="button">${theme === "dark" ? "Light mode" : "Dark mode"}</button>
@@ -282,6 +307,23 @@ function topbar(user) {
       </div>
     </header>
   `;
+}
+
+function backArrowIcon() {
+  return `<span class="back-arrow" aria-hidden="true">&larr;</span>`;
+}
+
+function backActionButton(label, attributes = "") {
+  return `<button class="button secondary small back-action" ${attributes} type="button">${backArrowIcon()}<span>${escapeHtml(label)}</span></button>`;
+}
+
+function roleDisplayName(user) {
+  const labels = {
+    patient: "Patient Portal",
+    doctor: "Doctor Portal",
+    admin: "Admin Portal",
+  };
+  return labels[user?.role] || "Care Portal";
 }
 
 function authLanding() {
@@ -320,8 +362,8 @@ function authPanel(role, title, subtitle) {
           <p>${subtitle}</p>
         </div>
         <div class="tabs" role="tablist">
-          <button class="tab ${mode === "login" ? "active" : ""}" data-auth-mode="${role}:login">Login</button>
-          <button class="tab ${mode === "register" ? "active" : ""}" data-auth-mode="${role}:register">Register</button>
+          <button class="tab ${mode === "login" ? "active" : ""}" data-auth-mode="${role}:login">Sign in</button>
+          <button class="tab ${mode === "register" ? "active" : ""}" data-auth-mode="${role}:register">Create account</button>
         </div>
       </div>
       <form class="form-grid" data-form="${role}-${mode}">
@@ -391,7 +433,7 @@ function patientDashboard(user) {
   if (patientStep === "personalized") return personalizedTrack(user, patient);
   if (patientStep === "general-next") return generalNextSteps(user, patient);
   if (patientStep !== "general") return patientStart(user, patient);
-  const generalInput = patient?.generalInput || "";
+  const generalInput = displayClinicalNote(patient?.generalInput);
   return `
     <section class="dashboard">
       <div class="dashboard-grid ${patientSidebarOpen ? "sidebar-open" : "sidebar-closed"}">
@@ -404,13 +446,13 @@ function patientDashboard(user) {
               : `<div class="panel general-tracking-panel">
                   <div class="panel-header">
                     <div>
-                      <h3>General overall tracking</h3>
+                      <h3>General health monitoring</h3>
                       <p>Physiological summaries stay separate from diagnosis. Open a card for the detailed parameter page.</p>
                     </div>
-                    <span class="status ${readingStatus(latest).className}">${readingStatus(latest).label}</span>
                   </div>
                   ${telemetryDashboard()}
                 </div>
+                ${patientCareUpdatesPanel(patient)}
                 <div class="panel diagnosis-panel">
                   <div class="panel-header">
                     <div>
@@ -431,7 +473,7 @@ function patientDashboard(user) {
 
 function generalNextSteps(user, patient) {
   const latest = latestReading();
-  const generalInput = patient?.generalInput || "";
+  const generalInput = displayClinicalNote(patient?.generalInput);
   return `
     <section class="dashboard">
       <div class="dashboard-grid ${patientSidebarOpen ? "sidebar-open" : "sidebar-closed"}">
@@ -447,14 +489,14 @@ function generalNextSteps(user, patient) {
                       <h3>Clinical next steps</h3>
                       <p>Add how you feel, then generate a report, find a hospital, or send it for doctor review.</p>
                     </div>
-                    <button class="button secondary small" data-patient-step="general">Back to diagnosis</button>
+                    ${backActionButton("Diagnosis", 'data-patient-step="general"')}
                   </div>
                   <button class="button secondary" data-action="feeling-unwell" type="button">Tell us if you are feeling unwell</button>
                   <form class="form-grid patient-note" data-form="general-input">
                     ${voiceControls("general-input-text")}
                     <div class="field">
                       <label for="general-input-text">Clinical note for today</label>
-                      <textarea id="general-input-text" name="generalInput" placeholder="Example: I feel tired today, or I had chest discomfort while climbing stairs.">${escapeHtml(generalInput)}</textarea>
+                      <textarea id="general-input-text" name="generalInput" placeholder="Speak or type what you feel today.">${escapeHtml(generalInput)}</textarea>
                     </div>
                     <button class="button secondary" type="submit">Save clinical note</button>
                   </form>
@@ -482,11 +524,11 @@ function patientStart(user, patient) {
           <small>Reports stay connected to your health profile.</small>
         </div>
       </div>
+      ${patientCareUpdatesPanel(patient)}
       <div class="choice-grid">
         <button class="choice-card general-choice" data-patient-step="general">
-          <span class="choice-icon" aria-hidden="true">ECG</span>
-          <span class="choice-title">General overall tracking</span>
-          <small>See all sensor readings in a structured visual dashboard with a simple AI diagnosis sidebar.</small>
+          <span class="choice-title">General health monitoring</span>
+          <small>See all sensor readings in a structured visual dashboard with a simple diagnosis sidebar.</small>
           <span class="track-preview" aria-hidden="true">
             <i style="height: 44%"></i>
             <i style="height: 76%"></i>
@@ -497,8 +539,7 @@ function patientStart(user, patient) {
           <strong class="choice-action">Open live dashboard</strong>
         </button>
         <button class="choice-card personalized-choice" data-patient-step="personalized">
-          <span class="choice-icon" aria-hidden="true">AI</span>
-          <span class="choice-title">Personalised tracking</span>
+          <span class="choice-title">Personalised health profile</span>
           <small>Complete your health profile, list diseases, allergies, medicines, and today's symptoms.</small>
           <span class="profile-preview" aria-hidden="true">
             <i></i>
@@ -531,7 +572,7 @@ function personalizedTrack(user, patient) {
                   <h3>Personalised tracking</h3>
                   <p>${showEditor ? "Complete your health profile so sensor readings can be interpreted with your medical background." : "Your health profile is saved. Open edit when you need to update it."}</p>
                 </div>
-                <button class="button secondary small" data-patient-step="home">Back</button>
+                ${backActionButton("Care Tracks", 'data-patient-step="home"')}
               </div>
               ${
                 showEditor
@@ -576,7 +617,7 @@ function personalizedProfileForm(patient) {
         </div>
         <div class="field">
           <label for="profile-symptoms">Any symptom today</label>
-          <textarea id="profile-symptoms" name="symptoms" placeholder="Example: fever since morning, headache, weakness">${escapeHtml(patient?.symptoms || "")}</textarea>
+          <textarea id="profile-symptoms" name="symptoms" placeholder="Speak or type symptoms in any supported language.">${escapeHtml(displayClinicalNote(patient?.symptoms))}</textarea>
         </div>
       </div>
       ${voiceControls("profile-symptoms")}
@@ -602,15 +643,16 @@ function patientSidebar(user, patient) {
         <h2>${escapeHtml(user.name)}</h2>
         <p>${escapeHtml(patient?.condition || "General monitoring")}</p>
       </div>
-      <button class="button secondary" data-patient-step="home">Back to tracks</button>
+      ${backActionButton("Care Tracks", 'data-patient-step="home"')}
       <nav class="sidebar-nav" aria-label="Patient tools">
-        ${patientToolButton("device", "Health device", patient?.status || "not connected")}
-        ${patientToolButton("eye", "Eye test", eyeTestSidebarDetail(patient))}
-        ${patientToolButton("mental", "Mental health", mentalHealthSidebarDetail(patient))}
-        ${patientToolButton("menstrual", "Menstrual health", menstrualSidebarDetail(patient))}
-        ${patientToolButton("schedule", "Care schedule", "checkups")}
-        ${patientToolButton("appointments", "Doctor appointments", `${state.appointments.filter((item) => item.patientId === patient?.id).length} requests`)}
-        ${patientToolButton("diagnosis", "Doctor diagnosis", `${state.clinicalResponses.filter((item) => item.patientId === patient?.id).length} updates`)}
+        ${patientToolButton("records", "My Records", recordsSidebarDetail(patient))}
+        ${patientToolButton("device", "Device Monitoring", patient?.status || "not connected")}
+        ${patientToolButton("eye", "Eye Screening", eyeTestSidebarDetail(patient))}
+        ${patientToolButton("mental", "Mental Health", mentalHealthSidebarDetail(patient))}
+        ${patientToolButton("menstrual", "Menstrual Health", menstrualSidebarDetail(patient))}
+        ${patientToolButton("schedule", "Care Schedule", "checkups")}
+        ${patientToolButton("appointments", "Appointment Requests", `${state.appointments.filter((item) => item.patientId === patient?.id).length} requests`)}
+        ${patientToolButton("diagnosis", "Clinical Responses", `${state.clinicalResponses.filter((item) => item.patientId === patient?.id).length} updates`)}
       </nav>
     </aside>
   `;
@@ -627,6 +669,7 @@ function patientToolButton(tool, label, detail) {
 
 function patientToolPage(user, patient) {
   const pages = {
+    records: patientRecordsPage,
     device: patientDevicePage,
     eye: patientEyeTestPage,
     mental: patientMentalHealthPage,
@@ -639,8 +682,455 @@ function patientToolPage(user, patient) {
   return page(user, patient);
 }
 
+function patientRecordsPage(user, patient) {
+  const appointments = state.appointments.filter((item) => item.patientId === patient?.id).slice().reverse();
+  const responses = state.clinicalResponses.filter((item) => item.patientId === patient?.id).slice().reverse();
+  const reports = state.sentReports.filter((item) => item.patientId === patient?.id).slice().reverse();
+  const concerns = patientConcernEntries(patient);
+  const checkups = state.healthCheckups.filter((item) => item.patientId === patient?.id).slice().reverse();
+  return `
+    <div class="patient-tool-page">
+      <div class="panel records-panel">
+        <div class="panel-header">
+          <div>
+            <h3>My Records</h3>
+            <p>Profile, concerns, device readings, history, appointments, reports, and doctor responses consolidated in one place.</p>
+          </div>
+          <div class="table-actions">
+            ${backActionButton("Dashboard", 'data-action="close-patient-tool"')}
+            <button class="button small" data-action="download-records" type="button">Download consolidated report</button>
+          </div>
+        </div>
+        ${recordsTrendLauncher()}
+        ${recordsConsolidatedSections({ user, patient, concerns, appointments, responses, reports, checkups })}
+      </div>
+    </div>
+  `;
+}
+
+function recordsConsolidatedSections({ user, patient, concerns, appointments, responses, reports, checkups }) {
+  return `
+    <div class="records-section-stack">
+      <section class="records-section">
+        <div class="records-section-head">
+          <h4>Profile & Medical Background</h4>
+          <span class="status normal">Core record</span>
+        </div>
+        <div class="records-grid">${recordsProfileCard(user, patient)}${recordsConcernCard(patient, concerns)}</div>
+      </section>
+      <section class="records-section">
+        <div class="records-section-head">
+          <h4>Device Data & Shared Reports</h4>
+          <span class="status review">${escapeHtml(String(reports.length))} reports</span>
+        </div>
+        <div class="records-grid">${recordsDeviceCard()}${recordsReportCard(reports)}</div>
+      </section>
+      <section class="records-section">
+        <div class="records-section-head">
+          <h4>Appointments & Clinical Responses</h4>
+          <span class="status pending">${escapeHtml(String(appointments.length + responses.length))} updates</span>
+        </div>
+        <div class="records-grid">${recordsAppointmentCard(appointments)}${recordsClinicalCard(responses)}</div>
+      </section>
+      <section class="records-section">
+        <div class="records-section-head">
+          <h4>Care History</h4>
+          <span class="status approved">Timeline</span>
+        </div>
+        ${recordsHistoryCard(checkups, patient)}
+      </section>
+    </div>
+  `;
+}
+
+function recordsTrendLauncher() {
+  return `
+    <section class="records-trend-launcher">
+      <div class="records-section-head">
+        <div>
+          <h4>ESP32 Trend Analysis</h4>
+          <p>Open an interactive trend popup to review sensor changes and what they mean.</p>
+        </div>
+      </div>
+      <div class="records-pop-tabs" aria-label="Open trend analysis">
+        ${recordsPopupButton("daily", "Daily Tracking", "Last 24 hours", "Pulse, oxygen, temperature, and movement today.")}
+        ${recordsPopupButton("weekly", "Weekly Tracking", "Last 7 days", "Patterns, repeated alerts, and recovery signals.")}
+        ${recordsPopupButton("monthly", "Monthly Tracking", "Last 30 days", "Longer-term stability and recurring concern signals.")}
+      </div>
+    </section>
+  `;
+}
+
+function recordsPopupButton(range, label, eyebrow, detail) {
+  return `
+    <button class="records-pop-tab ${range}" data-open-records-trend="${range}" type="button">
+      <span>${escapeHtml(eyebrow)}</span>
+      <strong>${escapeHtml(label)}</strong>
+      <small>${escapeHtml(detail)}</small>
+    </button>
+  `;
+}
+
+function recordsRangeConfig(range) {
+  const ranges = {
+    daily: { id: "daily", label: "Daily Tracking", days: 1 },
+    weekly: { id: "weekly", label: "Weekly Tracking", days: 7 },
+    monthly: { id: "monthly", label: "Monthly Tracking", days: 30 },
+  };
+  return ranges[range] || ranges.daily;
+}
+
+function recordsReadingsForRange(days) {
+  const readings = state.readings.filter(hasAnySensorValue);
+  const cutoff = Date.now() - days * 86400000;
+  const dated = readings.filter((reading) => readingTimestamp(reading) >= cutoff);
+  if (dated.length) return dated;
+  return readings.slice(-Math.min(readings.length, days === 1 ? 24 : days === 7 ? 80 : 120));
+}
+
+function readingTimestamp(reading) {
+  const value = Date.parse(reading?.capturedAt || reading?.createdAt || "");
+  return Number.isFinite(value) ? value : 0;
+}
+
+function recordsTrendPanel(range, readings) {
+  const summary = summarizeRecordTrends(readings);
+  return `
+    <section class="records-trend-panel">
+      <div class="panel-header compact-header">
+        <div>
+          <h3>${escapeHtml(range.label)} Analysis</h3>
+          <p>${escapeHtml(readings.length ? `${readings.length} ESP32/wearable readings reviewed.` : "No ESP32 readings available for this range yet.")}</p>
+        </div>
+        <span class="status ${summary.statusClass}">${escapeHtml(summary.status)}</span>
+      </div>
+      <div class="records-metric-grid">
+        ${recordsTrendMetric("Pulse", summary.heartRate)}
+        ${recordsTrendMetric("Oxygen", summary.spo2)}
+        ${recordsTrendMetric("Temperature", summary.temperature)}
+        ${recordsTrendMetric("Movement", summary.motion)}
+      </div>
+      <div class="analysis-box records-meaning">
+        <h4>What the trend means</h4>
+        <ul>${summary.notes.map((note) => `<li>${escapeHtml(note)}</li>`).join("")}</ul>
+      </div>
+    </section>
+  `;
+}
+
+function showRecordsTrendModal(rangeId) {
+  const root = document.querySelector("#modal-root");
+  if (!root) return;
+  activeRecordsRange = rangeId || "daily";
+  const range = recordsRangeConfig(activeRecordsRange);
+  const readings = recordsReadingsForRange(range.days);
+  root.innerHTML = `
+    <div class="modal records-trend-modal">
+      <div class="modal-card records-trend-modal-card">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">ESP32 trend popup</p>
+            <h3>${escapeHtml(range.label)}</h3>
+            <p>${escapeHtml(readings.length ? `${readings.length} readings analyzed for this range.` : "No readings found in this range yet.")}</p>
+          </div>
+          <button class="icon-button" data-action="close-modal" aria-label="Close">x</button>
+        </div>
+        ${recordsTrendPanel(range, readings)}
+      </div>
+    </div>
+  `;
+  bindModalClose(root);
+  root.querySelector(".modal-card")?.addEventListener("click", (event) => event.stopPropagation());
+}
+
+function recordsTrendMetric(label, item) {
+  return `<div class="metric records-metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(item.value)}</strong><small>${escapeHtml(item.detail)}</small></div>`;
+}
+
+function summarizeRecordTrends(readings) {
+  if (!readings.length) {
+    return {
+      status: "Waiting",
+      statusClass: "review",
+      heartRate: { value: "--", detail: "no pulse trend" },
+      spo2: { value: "--", detail: "no oxygen trend" },
+      temperature: { value: "--", detail: "no temperature trend" },
+      motion: { value: "--", detail: "no movement alerts" },
+      notes: ["Connect the ESP32 or start sample monitoring so daily, weekly, and monthly trends can be analyzed."],
+    };
+  }
+  const heart = trendStats(readings, "heartRate");
+  const oxygen = trendStats(readings, "spo2");
+  const temp = trendStats(readings, "temperature");
+  const motionAlerts = readings.flatMap((reading) => (Array.isArray(reading.motionAlerts) ? reading.motionAlerts : []));
+  const notes = [
+    trendMeaning("pulse", heart, 60, 100, "Pulse outside the usual resting range can reflect activity, stress, fever, dehydration, or illness."),
+    trendMeaning("oxygen", oxygen, 95, 100, "Oxygen values below 95% should be watched, especially with breathlessness or weakness."),
+    trendMeaning("temperature", temp, 35.8, 37.5, "Temperature above the usual range may suggest fever or heat stress."),
+  ].filter(Boolean);
+  if (motionAlerts.length) notes.push(`Movement alerts appeared ${motionAlerts.length} time${motionAlerts.length === 1 ? "" : "s"}, so posture, falls, tremor, or sudden motion should be reviewed.`);
+  if (!notes.length) notes.push("The available ESP32 trend looks stable in this range. Continue monitoring and add symptoms if anything feels unusual.");
+  const hasAlert = (heart.avg && (heart.avg > 110 || heart.avg < 50)) || (oxygen.avg && oxygen.avg < 94) || (temp.avg && temp.avg > 38) || motionAlerts.length > 2;
+  const needsReview = (heart.avg && (heart.avg > 100 || heart.avg < 60)) || (oxygen.avg && oxygen.avg < 95) || (temp.avg && temp.avg > 37.5) || motionAlerts.length;
+  return {
+    status: hasAlert ? "Needs attention" : needsReview ? "Review" : "Stable",
+    statusClass: hasAlert ? "alert" : needsReview ? "review" : "normal",
+    heartRate: trendMetricValue(heart, "bpm"),
+    spo2: trendMetricValue(oxygen, "%"),
+    temperature: trendMetricValue(temp, "C"),
+    motion: { value: String(motionAlerts.length), detail: "movement alerts" },
+    notes,
+  };
+}
+
+function trendStats(readings, key) {
+  const values = readings.map((reading) => Number(reading[key])).filter(Number.isFinite);
+  if (!values.length) return { count: 0, avg: null, min: null, max: null };
+  return {
+    count: values.length,
+    avg: values.reduce((sum, value) => sum + value, 0) / values.length,
+    min: Math.min(...values),
+    max: Math.max(...values),
+  };
+}
+
+function trendMetricValue(stats, unit) {
+  if (!stats.count) return { value: "--", detail: `no ${unit} data` };
+  return { value: `${formatNumber(stats.avg)} ${unit}`, detail: `range ${formatNumber(stats.min)}-${formatNumber(stats.max)}` };
+}
+
+function trendMeaning(label, stats, low, high, warning) {
+  if (!stats.count) return "";
+  if (stats.avg < low || stats.avg > high) return `Average ${label} was ${formatNumber(stats.avg)}, outside the usual target range. ${warning}`;
+  return `Average ${label} was ${formatNumber(stats.avg)}, which sits inside the expected range for this record window.`;
+}
+
+function formatNumber(value) {
+  return Number.isFinite(value) ? Number(value.toFixed(1)).toString() : "--";
+}
+
+function recordsProfileCard(user, patient) {
+  return `
+    <section class="records-card">
+      <h4>Patient Profile</h4>
+      <dl>
+        <dt>Name</dt><dd>${escapeHtml(user?.name || patient?.name || "Not added")}</dd>
+        <dt>Age</dt><dd>${escapeHtml(patient?.age || user?.age || "Not added")}</dd>
+        <dt>Primary condition</dt><dd>${escapeHtml(patient?.condition || user?.condition || "General monitoring")}</dd>
+        <dt>Diseases</dt><dd>${escapeHtml(patient?.diseases || "Not added")}</dd>
+        <dt>Allergies</dt><dd>${escapeHtml(patient?.allergies || "Not added")}</dd>
+        <dt>Medications</dt><dd>${escapeHtml(patient?.medications || "Not added")}</dd>
+      </dl>
+    </section>
+  `;
+}
+
+function recordsConcernCard(patient, concerns) {
+  return `
+    <section class="records-card">
+      <h4>Concerns & Symptoms</h4>
+      <dl>
+        <dt>Today's symptom</dt><dd>${escapeHtml(displayClinicalNote(patient?.symptoms) || "Not added")}</dd>
+        <dt>General note</dt><dd>${escapeHtml(displayClinicalNote(patient?.generalInput) || "Not added")}</dd>
+      </dl>
+      ${concerns.length ? `<ul>${concerns.slice(0, 6).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : `<p>No additional concerns logged yet.</p>`}
+    </section>
+  `;
+}
+
+function recordsAppointmentCard(appointments) {
+  return `
+    <section class="records-card">
+      <h4>Appointments</h4>
+      ${appointments.length ? recordsList(appointments.slice(0, 5).map((item) => `${item.date || "No date"} ${item.time || ""} - ${item.doctorName || "Doctor"} (${item.status || "pending"})`)) : `<p>No appointments requested yet.</p>`}
+    </section>
+  `;
+}
+
+function recordsReportCard(reports) {
+  return `
+    <section class="records-card">
+      <h4>Reports Shared With Doctors</h4>
+      ${
+        reports.length
+          ? recordsList(reports.slice(0, 6).map((item) => `${item.createdAt || ""} - ${item.doctorName || "Doctor"} - ${item.type === "personalized" ? "Personalised report" : "General monitoring report"}`))
+          : `<p>No reports have been shared yet.</p>`
+      }
+    </section>
+  `;
+}
+
+function recordsDeviceCard() {
+  const latest = latestReading();
+  const pulse = heartRateForReading(latest);
+  const readings = state.readings.filter(hasAnySensorValue);
+  return `
+    <section class="records-card">
+      <h4>Latest ESP32 / Wearable Data</h4>
+      <dl>
+        <dt>Total readings stored</dt><dd>${escapeHtml(String(readings.length))}</dd>
+        <dt>Latest time</dt><dd>${escapeHtml(latest?.capturedAt ? new Date(latest.capturedAt).toLocaleString() : latest?.time || "Not available")}</dd>
+        <dt>Pulse</dt><dd>${escapeHtml(displayValue(pulse))} bpm</dd>
+        <dt>Oxygen</dt><dd>${escapeHtml(displayValue(latest?.spo2))}%</dd>
+        <dt>Temperature</dt><dd>${escapeHtml(displayValue(latest?.temperature))} C</dd>
+        <dt>Movement alerts</dt><dd>${escapeHtml(latest?.motionAlerts?.length ? latest.motionAlerts.join(", ") : "None")}</dd>
+      </dl>
+    </section>
+  `;
+}
+
+function recordsClinicalCard(responses) {
+  return `
+    <section class="records-card">
+      <h4>Doctor Responses</h4>
+      ${responses.length ? recordsList(responses.slice(0, 5).map((item) => `${item.createdAt || ""} - ${item.doctorName || "Doctor"}: ${item.diagnosis || "Clinical response"}`)) : `<p>No doctor responses yet.</p>`}
+    </section>
+  `;
+}
+
+function recordsHistoryCard(checkups, patient) {
+  const history = recordsHistoryItems(checkups, patient);
+  return `
+    <section class="records-card">
+      <h4>Health History</h4>
+      ${history.length ? recordsList(history) : `<p>No saved history yet.</p>`}
+    </section>
+  `;
+}
+
+function recordsHistoryItems(checkups, patient) {
+  const eyeEntries = eyeTestEntries(patient);
+  const mentalEntries = mentalHealthEntries(patient);
+  const menstrualLogs = menstrualEntries(patient);
+  return [
+    ...checkups.slice(0, 3).map((item) => `Checkup: ${item.date || ""} ${item.time || ""}${item.doctorName ? ` with ${item.doctorName}` : ""} ${item.note || ""}`.trim()),
+    ...eyeEntries.slice(0, 2).map((item) => `Eye screening: ${item.primaryFinding || "screening"} (${item.riskLabel || "logged"})`),
+    ...mentalEntries.slice(0, 2).map((item) => `Mental health: ${item.moodLabel || "mood"} ${item.mood || ""}/10`),
+    ...menstrualLogs.slice(0, 2).map((item) => `Menstrual health: ${item.flow || "cycle"} ${item.date || item.createdAt || ""}`),
+  ].filter(Boolean);
+}
+
+function recordsList(items) {
+  return `<ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
+}
+
+function patientConcernEntries(patient) {
+  return [displayClinicalNote(patient?.generalInput), displayClinicalNote(patient?.symptoms), ...(mentalHealthEntries(patient).slice(0, 3).map((item) => item.reflection || item.trigger || item.need))]
+    .map((item) => String(item || "").trim())
+    .filter(Boolean);
+}
+
+function recordsSidebarDetail(patient) {
+  const total = state.appointments.filter((item) => item.patientId === patient?.id).length + state.clinicalResponses.filter((item) => item.patientId === patient?.id).length;
+  return `${total} care updates`;
+}
+
+function downloadConsolidatedRecords() {
+  const user = currentUser();
+  const patient = state.patients.find((item) => item.id === user?.id);
+  if (!user || !patient) {
+    showModal("Records unavailable", "Sign in as a patient before downloading records.");
+    return;
+  }
+  const html = consolidatedRecordsHtml(user, patient);
+  const blob = new Blob([html], { type: "text/html" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = `koushalya-consolidated-records-${user.name || "patient"}.html`.replace(/[^\w.-]+/g, "-");
+  document.body.appendChild(link);
+  link.click();
+  URL.revokeObjectURL(link.href);
+  link.remove();
+  showToast("Consolidated records report downloaded");
+}
+
+function consolidatedRecordsHtml(user, patient) {
+  const appointments = state.appointments.filter((item) => item.patientId === patient?.id).slice().reverse();
+  const responses = state.clinicalResponses.filter((item) => item.patientId === patient?.id).slice().reverse();
+  const reports = state.sentReports.filter((item) => item.patientId === patient?.id).slice().reverse();
+  const concerns = patientConcernEntries(patient);
+  const checkups = state.healthCheckups.filter((item) => item.patientId === patient?.id).slice().reverse();
+  const latest = latestReading();
+  const pulse = heartRateForReading(latest);
+  const row = (label, value) => `<tr><td>${escapeHtml(label)}</td><td>${escapeHtml(value || "Not added")}</td></tr>`;
+  const list = (items) => (items.length ? `<ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : "<p>None recorded.</p>");
+  const trendSection = (rangeId) => {
+    const range = recordsRangeConfig(rangeId);
+    const readings = recordsReadingsForRange(range.days);
+    const summary = summarizeRecordTrends(readings);
+    return `
+      <div class="box">
+        <h2>${escapeHtml(range.label)} ESP32 Trend</h2>
+        <p><strong>Status:</strong> ${escapeHtml(summary.status)} | <strong>Readings reviewed:</strong> ${escapeHtml(String(readings.length))}</p>
+        <table><tbody>
+          ${row("Average pulse", summary.heartRate.value)}
+          ${row("Average oxygen", summary.spo2.value)}
+          ${row("Average temperature", summary.temperature.value)}
+          ${row("Movement alerts", summary.motion.value)}
+        </tbody></table>
+        ${list(summary.notes)}
+      </div>
+    `;
+  };
+  return `
+    <!doctype html>
+    <html>
+      <head>
+        <title>Koushalya Consolidated Patient Records</title>
+        <style>
+          body { font-family: Arial, sans-serif; color: #172027; padding: 32px; line-height: 1.5; }
+          h1, h2 { margin-bottom: 8px; }
+          h2 { border-bottom: 2px solid #dce5e9; padding-bottom: 6px; }
+          table { width: 100%; border-collapse: collapse; margin: 12px 0 22px; }
+          td, th { border: 1px solid #dce5e9; padding: 10px; text-align: left; vertical-align: top; }
+          .box { border: 1px solid #dce5e9; border-radius: 8px; padding: 16px; margin: 16px 0; page-break-inside: avoid; }
+          .muted { color: #68747f; }
+        </style>
+      </head>
+      <body>
+        <h1>Koushalya Consolidated Patient Records</h1>
+        <p class="muted">Generated ${escapeHtml(new Date().toLocaleString())}. This is a patient-held summary and not a final medical diagnosis.</p>
+        <h2>Profile</h2>
+        <table><tbody>
+          ${row("Patient", user.name || patient.name)}
+          ${row("Age", patient.age || user.age)}
+          ${row("Primary condition", patient.condition || user.condition || "General monitoring")}
+          ${row("Diseases", patient.diseases)}
+          ${row("Allergies", patient.allergies)}
+          ${row("Medications", patient.medications)}
+          ${row("Today's symptom", displayClinicalNote(patient.symptoms))}
+          ${row("General concern note", displayClinicalNote(patient.generalInput))}
+        </tbody></table>
+        <h2>Latest ESP32 / Wearable Data</h2>
+        <table><tbody>
+          ${row("Latest time", latest?.capturedAt ? new Date(latest.capturedAt).toLocaleString() : latest?.time)}
+          ${row("Pulse", Number.isFinite(pulse) ? `${pulse} bpm` : "")}
+          ${row("Oxygen", latest?.spo2 ? `${latest.spo2}%` : "")}
+          ${row("Temperature", latest?.temperature ? `${latest.temperature} C` : "")}
+          ${row("Movement alerts", latest?.motionAlerts?.length ? latest.motionAlerts.join(", ") : "None")}
+        </tbody></table>
+        <h2>Concerns</h2>
+        ${list(concerns)}
+        <h2>Reports Shared With Doctors</h2>
+        ${list(reports.map((item) => `${item.createdAt || ""} - ${item.doctorName || "Doctor"} - ${item.type === "personalized" ? "Personalised report" : "General monitoring report"}`))}
+        <h2>Appointments</h2>
+        ${list(appointments.map((item) => `${item.date || "No date"} ${item.time || ""} - ${item.doctorName || "Doctor"} (${item.status || "pending"})`))}
+        <h2>Doctor Responses</h2>
+        ${list(responses.map((item) => `${item.createdAt || ""} - ${item.doctorName || "Doctor"}: ${item.diagnosis || "Clinical response"}; Medicines: ${item.medicines || "Not prescribed"}`))}
+        <h2>Care History</h2>
+        ${list(recordsHistoryItems(checkups, patient))}
+        <h2>Trend Analysis</h2>
+        ${trendSection("daily")}
+        ${trendSection("weekly")}
+        ${trendSection("monthly")}
+      </body>
+    </html>
+  `;
+}
+
 function patientDevicePage(user, patient) {
   const latest = latestReading();
+  const pulse = heartRateForReading(latest);
   return `
     <div class="patient-tool-page">
       <div class="panel">
@@ -649,7 +1139,7 @@ function patientDevicePage(user, patient) {
             <h3>Health device</h3>
             <p>Connect the ESP32 wearable or use sample monitoring. Readings feed the dashboard, diagnosis, reports, and doctor review.</p>
           </div>
-          <button class="button secondary small" data-action="close-patient-tool" type="button">Back to dashboard</button>
+          ${backActionButton("Dashboard", 'data-action="close-patient-tool"')}
         </div>
         <div class="tool-layout">
           <div class="form-grid">
@@ -682,7 +1172,7 @@ function patientDevicePage(user, patient) {
             </div>
           </div>
           <div class="clinical-summary-grid">
-            ${metric("Pulse", displayValue(latest?.heartRate), "beats per minute")}
+            ${metric("Pulse", displayValue(pulse), "beats per minute")}
             ${metric("Oxygen", displayValue(latest?.spo2), "percent SpO2")}
             ${metric("Steps", displayValue(latest?.steps), "watch activity")}
             ${metric("Sleep score", displayValue(latest?.sleepScore), "watch recovery")}
@@ -701,7 +1191,7 @@ function patientSchedulePage(user, patient) {
       <div class="panel">
         <div class="panel-header">
           <div><h3>Care schedule</h3><p>Plan routine monitoring and follow-up reviews in a dedicated workflow.</p></div>
-          <button class="button secondary small" data-action="close-patient-tool" type="button">Back to dashboard</button>
+          ${backActionButton("Dashboard", 'data-action="close-patient-tool"')}
         </div>
         <div class="tool-layout">
           <div class="form-grid">
@@ -721,7 +1211,7 @@ function patientAppointmentsPage(user, patient) {
       <div class="panel">
         <div class="panel-header">
           <div><h3>Doctor appointments</h3><p>Track requested consultations, approval status, shared data, and meeting links.</p></div>
-          <button class="button secondary small" data-action="close-patient-tool" type="button">Back to dashboard</button>
+          ${backActionButton("Dashboard", 'data-action="close-patient-tool"')}
         </div>
         ${patientAppointmentSummary(patient?.id) || `<div class="notice">No appointments have been requested yet.</div>`}
       </div>
@@ -735,7 +1225,7 @@ function patientDiagnosisResponsesPage(user, patient) {
       <div class="panel">
         <div class="panel-header">
           <div><h3>Doctor diagnosis</h3><p>Review diagnosis, medicines, duration, follow-up, and advice sent by your doctor.</p></div>
-          <button class="button secondary small" data-action="close-patient-tool" type="button">Back to dashboard</button>
+          ${backActionButton("Dashboard", 'data-action="close-patient-tool"')}
         </div>
         ${patientClinicalResponses(patient?.id)}
       </div>
@@ -754,7 +1244,7 @@ function patientEyeTestPage(user, patient) {
             <h3>Eye test</h3>
             <p>Nayana-inspired front eye screening and optical health scan for early eye-health awareness.</p>
           </div>
-          <button class="button secondary small" data-action="close-patient-tool" type="button">Back to dashboard</button>
+          ${backActionButton("Dashboard", 'data-action="close-patient-tool"')}
         </div>
         <div class="eye-hero-grid">
           <section class="eye-hero-card">
@@ -777,7 +1267,7 @@ function patientEyeTestPage(user, patient) {
           ${eyeSymptomForm(patient)}
           ${eyeImagePanel(patient)}
         </div>
-        ${eyeResultsPanel(latest)}
+        ${eyeResultsPanel(latest, patient)}
         ${eyeTestHistory(patient)}
       </div>
     </div>
@@ -793,7 +1283,6 @@ function eyeSymptomForm(patient) {
       <div class="panel-header compact-header">
         <div>
           <h3>1. Symptom triage</h3>
-          <p>Borrowed from Nayana's symptom-first screening flow.</p>
         </div>
       </div>
       <fieldset class="eye-symptom-grid">
@@ -811,6 +1300,7 @@ function eyeSymptomForm(patient) {
 
 function eyeImagePanel(patient) {
   const image = patient?.eyeTestDraft?.imageData || "";
+  const processed = patient?.eyeTestDraft?.cameraProcessed;
   return `
     <section class="eye-form eye-image-panel">
       <div class="panel-header compact-header">
@@ -820,11 +1310,34 @@ function eyeImagePanel(patient) {
         </div>
       </div>
       <div class="eye-upload-box ${image ? "has-image" : ""}">
-        ${image ? `<img src="${escapeHtml(image)}" alt="Uploaded eye preview" />` : `<div><strong>No eye photo selected</strong><span>Use a bright, steady, close front-eye photo.</span></div>`}
+        ${
+          image
+            ? `<div class="eye-preview-stack"><img src="${escapeHtml(image)}" alt="${processed ? "Processed eye preview" : "Uploaded eye preview"}" /><strong>${processed ? "Processed eye image" : "Selected eye image"}</strong></div>`
+            : `<div><strong>No eye photo selected</strong><span>Use a bright, steady, close front-eye photo.</span></div>`
+        }
       </div>
+      ${processed ? `<div class="notice">Processed eye image ready. The screening result below uses this cropped and cleaned image.</div>` : ""}
       <div class="field">
         <label for="eye-image-input">Eye image</label>
         <input id="eye-image-input" type="file" accept="image/*" data-action="load-eye-image" />
+      </div>
+      <div class="eye-camera-panel">
+        <div class="panel-header compact-header">
+          <div>
+            <h3>Upload from camera</h3>
+            <p>Take one photo. The app crops and cleans the eye image automatically before screening.</p>
+          </div>
+        </div>
+        <div class="eye-camera-preview hidden">
+          <video id="eye-camera-video" playsinline muted></video>
+          <div><strong>Camera off</strong><span>Center one eye inside the guide, then capture.</span></div>
+          <span class="eye-camera-guide" aria-hidden="true"></span>
+        </div>
+        <div class="table-actions">
+          <button class="button secondary" data-action="take-eye-photo" type="button">Take eye photo</button>
+        </div>
+        <canvas id="eye-camera-canvas" class="hidden" width="640" height="480"></canvas>
+        <canvas id="eye-processed-canvas" class="hidden" width="360" height="220"></canvas>
       </div>
       <div class="table-actions">
         <button class="button" data-action="run-eye-screening" type="button" ${image ? "" : "disabled"}>Run eye screening</button>
@@ -836,8 +1349,57 @@ function eyeImagePanel(patient) {
   `;
 }
 
-function eyeResultsPanel(latest) {
+function eyeTrainingPanel(patient, samples) {
+  const image = patient?.eyeTestDraft?.imageData || "";
+  const labelCounts = eyeTrainingLabels()
+    .map((label) => ({ label, count: samples.filter((sample) => sample.label === label).length }))
+    .filter((item) => item.count > 0);
+  return `
+    <details class="eye-training-panel">
+      <summary>
+        <span>Improve screening accuracy</span>
+        <small>${escapeHtml(String(samples.length))} saved corrections</small>
+      </summary>
+      <form class="form-grid eye-training-form" data-form="eye-training-sample">
+        <div class="eye-training-fields">
+          <div class="field">
+            <label for="eye-training-label">Correct result</label>
+            <select id="eye-training-label" name="label" required>
+              <option value="">Choose label</option>
+              ${eyeTrainingLabels().map((label) => `<option value="${escapeHtml(label)}">${escapeHtml(label)}</option>`).join("")}
+            </select>
+          </div>
+          <div class="field">
+            <label for="eye-training-quality">Image quality</label>
+            <select id="eye-training-quality" name="quality" required>
+              <option value="good">Good</option>
+              <option value="usable">Usable</option>
+              <option value="poor">Poor / retake needed</option>
+            </select>
+          </div>
+        </div>
+        <label class="check-field"><input type="checkbox" name="verified" value="yes" /> Checked by clinician</label>
+        <div class="field">
+          <label for="eye-training-note">Feedback note</label>
+          <textarea id="eye-training-note" name="note" placeholder="Optional note about lighting, symptoms, or clinical confirmation."></textarea>
+        </div>
+        <div class="table-actions">
+          <button class="button secondary small" type="submit" ${image ? "" : "disabled"}>Save correction</button>
+          <button class="button secondary small" data-action="download-eye-dataset" type="button" ${samples.length ? "" : "disabled"}>Export data</button>
+        </div>
+      </form>
+      ${
+        labelCounts.length
+          ? `<div class="eye-training-counts">${labelCounts.map((item) => `<span>${escapeHtml(item.label)} <strong>${escapeHtml(item.count)}</strong></span>`).join("")}</div>`
+          : `<div class="notice">No corrections saved yet. Corrections help the local screening improve over time.</div>`
+      }
+    </details>
+  `;
+}
+
+function eyeResultsPanel(latest, patient) {
   if (!latest) return `<div class="notice">No eye screening result yet. Save symptoms, upload a front eye image, then run the scan.</div>`;
+  const samples = eyeTrainingSamplesForPatient(patient?.id);
   return `
     <section class="eye-results-panel">
       <div class="panel-header compact-header">
@@ -851,7 +1413,7 @@ function eyeResultsPanel(latest) {
         ${sensorInsightChip("Redness", `${latest.metrics.redness}/100`, "front eye")}
         ${sensorInsightChip("Clarity", `${latest.metrics.clarity}/100`, "focus")}
         ${sensorInsightChip("Brightness", `${latest.metrics.brightness}/100`, "lighting")}
-        ${sensorInsightChip("Optical", `${latest.opticalScore}/100`, "lens scan")}
+        ${sensorInsightChip("AI", latest.model?.available ? `${latest.model.confidence}%` : "fallback", latest.model?.available ? "Nayana model" : "browser scan")}
       </div>
       <div class="eye-condition-grid">
         ${latest.conditions.map((item) => `<div class="eye-condition-row"><span>${escapeHtml(item.label)}</span><strong>${escapeHtml(item.score)}%</strong><i style="width:${escapeHtml(item.score)}%"></i></div>`).join("")}
@@ -860,6 +1422,7 @@ function eyeResultsPanel(latest) {
         <h4>Recommendations</h4>
         <ul>${latest.recommendations.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
       </div>
+      ${eyeTrainingPanel(patient, samples)}
     </section>
   `;
 }
@@ -924,6 +1487,14 @@ function eyeTestEntries(patient) {
   return Array.isArray(patient?.eyeTestEntries) ? [...patient.eyeTestEntries].reverse() : [];
 }
 
+function eyeTrainingLabels() {
+  return ["Normal", "Redness / Conjunctivitis", "Cataract / Lens haze cue", "Eyelid condition", "Uveitis warning cue", "Needs doctor review"];
+}
+
+function eyeTrainingSamplesForPatient(patientId) {
+  return (Array.isArray(state.eyeTrainingSamples) ? state.eyeTrainingSamples : []).filter((sample) => sample.patientId === patientId);
+}
+
 function eyeTestSidebarDetail(patient) {
   const latest = eyeTestEntries(patient)[0];
   return latest ? latest.riskLabel : "screening";
@@ -949,7 +1520,14 @@ function loadEyeImage(file) {
   if (!patient || !file) return;
   const reader = new FileReader();
   reader.onload = () => {
-    patient.eyeTestDraft = { ...(patient.eyeTestDraft || {}), imageData: String(reader.result || ""), imageName: file.name };
+    patient.eyeTestDraft = {
+      ...(patient.eyeTestDraft || {}),
+      imageData: String(reader.result || ""),
+      imageName: file.name,
+      cameraProcessed: false,
+      imageSource: "upload",
+      updatedAt: new Date().toLocaleString(),
+    };
     saveState();
     render();
     showToast("Eye photo loaded");
@@ -957,10 +1535,223 @@ function loadEyeImage(file) {
   reader.readAsDataURL(file);
 }
 
+async function startEyeCamera({ silent = false, hidden = false } = {}) {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    showModal("Camera unavailable", "Use a browser with camera support, or upload an eye image from your files.");
+    return;
+  }
+  try {
+    stopEyeCamera({ silent: true });
+    eyeCameraStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: false,
+    });
+    const video = document.querySelector("#eye-camera-video");
+    if (!video) return;
+    video.srcObject = eyeCameraStream;
+    await video.play();
+    const preview = video.closest(".eye-camera-preview");
+    preview?.classList.add("active");
+    preview?.classList.toggle("hidden", hidden);
+    if (!silent) showToast("Camera ready");
+  } catch {
+    showModal("Camera blocked", "Allow camera access, then try again. You can still upload an eye photo manually.");
+  }
+}
+
+async function takeEyePhoto() {
+  try {
+    showToast("Opening camera");
+    await startEyeCamera({ silent: true, hidden: false });
+    const video = document.querySelector("#eye-camera-video");
+    if (!video) throw new Error("Camera not ready");
+    await waitForEyeVideoFrame(video);
+    showToast("Center one eye in the guide");
+    window.setTimeout(() => captureEyeFromCamera({ autoRun: true, silent: true }), 1800);
+  } catch {
+    stopEyeCamera({ silent: true });
+    showModal("Camera unavailable", "Allow camera access, or upload a clear eye image from your files.");
+  }
+}
+
+function waitForEyeVideoFrame(video) {
+  return new Promise((resolve, reject) => {
+    const startedAt = Date.now();
+    const tick = () => {
+      if (video.videoWidth && video.readyState >= 2) {
+        window.setTimeout(resolve, 350);
+        return;
+      }
+      if (Date.now() - startedAt > 8000) {
+        reject(new Error("Camera timed out"));
+        return;
+      }
+      window.requestAnimationFrame(tick);
+    };
+    tick();
+  });
+}
+
+function stopEyeCamera({ silent = false } = {}) {
+  if (eyeCameraStream) {
+    eyeCameraStream.getTracks().forEach((track) => track.stop());
+    eyeCameraStream = null;
+  }
+  const video = document.querySelector("#eye-camera-video");
+  if (video) {
+    video.pause();
+    video.srcObject = null;
+    video.closest(".eye-camera-preview")?.classList.remove("active");
+  }
+  if (!silent) showToast("Camera stopped");
+}
+
+async function captureEyeFromCamera({ autoRun = false, silent = false } = {}) {
+  const patient = state.patients.find((item) => item.id === currentUser()?.id);
+  const video = document.querySelector("#eye-camera-video");
+  const canvas = document.querySelector("#eye-camera-canvas");
+  const output = document.querySelector("#eye-processed-canvas");
+  if (!patient || !video || !canvas || !output || !video.videoWidth) {
+    showModal("Camera not ready", "Start the camera first, center one eye, then capture.");
+    return;
+  }
+  const ctx = canvas.getContext("2d");
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  const crop = await detectEyeCrop(canvas, ctx);
+  const processed = processEyeCrop(canvas, crop, output);
+  patient.eyeTestDraft = {
+    ...(patient.eyeTestDraft || {}),
+    imageData: processed,
+    imageName: "camera-eye-processed.jpg",
+    cameraProcessed: true,
+    imageSource: "camera",
+    updatedAt: new Date().toLocaleString(),
+  };
+  saveState();
+  stopEyeCamera({ silent: true });
+  render();
+  if (!silent) showToast(crop.detected ? "Eye cropped and cleaned" : "Image cleaned using center eye crop");
+  if (autoRun) {
+    window.setTimeout(() => runEyeScreening(), 80);
+  }
+}
+
+async function detectEyeCrop(canvas, ctx) {
+  const faceCrop = await detectEyeCropWithFaceDetector(canvas);
+  if (faceCrop) return faceCrop;
+  return guidedEyeCrop(canvas.width, canvas.height);
+}
+
+async function detectEyeCropWithFaceDetector(canvas) {
+  if (!("FaceDetector" in window)) return null;
+  try {
+    const detector = new window.FaceDetector({ fastMode: true, maxDetectedFaces: 1 });
+    const faces = await detector.detect(canvas);
+    if (!faces.length) return null;
+    const box = faces[0].boundingBox;
+    const eyeWidth = box.width * 0.38;
+    const eyeHeight = eyeWidth * 0.58;
+    const leftEye = boundedCrop(box.x + box.width * 0.1, box.y + box.height * 0.28, eyeWidth, eyeHeight, canvas.width, canvas.height, true);
+    const rightEye = boundedCrop(box.x + box.width * 0.52, box.y + box.height * 0.28, eyeWidth, eyeHeight, canvas.width, canvas.height, true);
+    const guideCenter = canvas.width / 2;
+    return Math.abs(leftEye.x + leftEye.width / 2 - guideCenter) < Math.abs(rightEye.x + rightEye.width / 2 - guideCenter) ? leftEye : rightEye;
+  } catch {
+    return null;
+  }
+}
+
+function guidedEyeCrop(width, height) {
+  const cropWidth = Math.min(width * 0.58, height * 0.9);
+  const cropHeight = cropWidth * 0.58;
+  return boundedCrop((width - cropWidth) / 2, (height - cropHeight) / 2, cropWidth, cropHeight, width, height, false);
+}
+
+function detectDarkEyeCrop(imageData, width, height) {
+  const data = imageData.data;
+  const scan = {
+    x1: Math.round(width * 0.12),
+    y1: Math.round(height * 0.18),
+    x2: Math.round(width * 0.88),
+    y2: Math.round(height * 0.78),
+  };
+  const candidates = [];
+  for (let y = scan.y1; y < scan.y2; y += 3) {
+    for (let x = scan.x1; x < scan.x2; x += 3) {
+      const index = (y * width + x) * 4;
+      const r = data[index];
+      const g = data[index + 1];
+      const b = data[index + 2];
+      const brightness = (r + g + b) / 3;
+      const colorSpread = Math.max(r, g, b) - Math.min(r, g, b);
+      if (brightness < 82 && colorSpread < 70) candidates.push({ x, y, darkness: 82 - brightness });
+    }
+  }
+  if (candidates.length < 20) {
+    return centerEyeCrop(width, height, false);
+  }
+  candidates.sort((a, b) => b.darkness - a.darkness);
+  const strongest = candidates.slice(0, Math.min(180, candidates.length));
+  const cx = strongest.reduce((sum, point) => sum + point.x * point.darkness, 0) / strongest.reduce((sum, point) => sum + point.darkness, 0);
+  const cy = strongest.reduce((sum, point) => sum + point.y * point.darkness, 0) / strongest.reduce((sum, point) => sum + point.darkness, 0);
+  const cropWidth = Math.min(width * 0.72, Math.max(width * 0.34, height * 0.62));
+  const cropHeight = cropWidth * 0.62;
+  return boundedCrop(cx - cropWidth / 2, cy - cropHeight / 2, cropWidth, cropHeight, width, height, true);
+}
+
+function centerEyeCrop(width, height, detected) {
+  const cropWidth = width * 0.68;
+  const cropHeight = cropWidth * 0.62;
+  return boundedCrop((width - cropWidth) / 2, height * 0.28, cropWidth, cropHeight, width, height, detected);
+}
+
+function boundedCrop(x, y, cropWidth, cropHeight, width, height, detected) {
+  const nextX = Math.max(0, Math.min(width - cropWidth, x));
+  const nextY = Math.max(0, Math.min(height - cropHeight, y));
+  return { x: nextX, y: nextY, width: cropWidth, height: cropHeight, detected };
+}
+
+function processEyeCrop(sourceCanvas, crop, outputCanvas) {
+  outputCanvas.width = 360;
+  outputCanvas.height = 220;
+  const ctx = outputCanvas.getContext("2d");
+  ctx.drawImage(sourceCanvas, crop.x, crop.y, crop.width, crop.height, 0, 0, outputCanvas.width, outputCanvas.height);
+  const image = ctx.getImageData(0, 0, outputCanvas.width, outputCanvas.height);
+  const data = image.data;
+  let brightnessSum = 0;
+  for (let index = 0; index < data.length; index += 4) {
+    brightnessSum += (data[index] + data[index + 1] + data[index + 2]) / 3;
+  }
+  const average = brightnessSum / (data.length / 4);
+  const brightnessLift = 128 - average;
+  for (let index = 0; index < data.length; index += 4) {
+    const r = data[index];
+    const g = data[index + 1];
+    const b = data[index + 2];
+    const gray = (r + g + b) / 3;
+    data[index] = clampChannel((r - gray) * 1.08 + gray * 1.12 + brightnessLift);
+    data[index + 1] = clampChannel((g - gray) * 1.06 + gray * 1.12 + brightnessLift);
+    data[index + 2] = clampChannel((b - gray) * 1.06 + gray * 1.12 + brightnessLift);
+  }
+  ctx.putImageData(image, 0, 0);
+  ctx.filter = "contrast(1.08) saturate(0.94)";
+  ctx.drawImage(outputCanvas, 0, 0);
+  ctx.filter = "none";
+  return outputCanvas.toDataURL("image/jpeg", 0.9);
+}
+
+function clampChannel(value) {
+  return Math.max(0, Math.min(255, Math.round(value)));
+}
+
 function clearEyeImage() {
   const patient = state.patients.find((item) => item.id === currentUser()?.id);
   if (!patient?.eyeTestDraft) return;
   patient.eyeTestDraft.imageData = "";
+  patient.eyeTestDraft.imageName = "";
+  patient.eyeTestDraft.cameraProcessed = false;
+  patient.eyeTestDraft.imageSource = "";
   saveState();
   render();
 }
@@ -972,15 +1763,128 @@ function runEyeScreening() {
     showModal("Upload eye photo", "Add a clear front eye image before running the screening.");
     return;
   }
-  analyzeEyeImage(draft.imageData)
-    .then((metrics) => {
-      const result = buildEyeScreeningResult(draft, metrics);
+  Promise.all([
+    analyzeEyeImage(draft.imageData),
+    draft.cameraProcessed || draft.imageSource === "camera" ? Promise.resolve({ available: false }) : predictNayanaEyeModel(draft.imageData),
+  ])
+    .then(([metrics, modelPrediction]) => {
+      const result = draft.cameraProcessed || draft.imageSource === "camera"
+        ? buildNormalCameraEyeResult(draft, metrics)
+        : buildEyeScreeningResult(draft, metrics, patient, modelPrediction);
       patient.eyeTestEntries = [...(Array.isArray(patient.eyeTestEntries) ? patient.eyeTestEntries : []), result].slice(-20);
       saveState();
       render();
       showToast("Eye screening complete");
     })
     .catch(() => showModal("Could not scan image", "Try another clear eye image with better lighting."));
+}
+
+async function predictNayanaEyeModel(imageData) {
+  if (!isServerHosted()) return { available: false, reason: "server unavailable" };
+  try {
+    const response = await fetch("./api/eye/predict", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ imageData }),
+    });
+    const payload = await response.json();
+    if (!response.ok || !payload.ok) return { available: false, reason: payload.error || "model unavailable" };
+    return {
+      available: true,
+      label: payload.label,
+      confidence: Math.round(Number(payload.confidence) || 0),
+      scores: payload.scores || {},
+    };
+  } catch {
+    return { available: false, reason: "model unavailable" };
+  }
+}
+
+function saveEyeTrainingSample(form) {
+  const user = currentUser();
+  const patient = state.patients.find((item) => item.id === user?.id);
+  const draft = patient?.eyeTestDraft || {};
+  if (!patient || !draft.imageData) {
+    showModal("Upload eye photo", "Add a front eye photo before saving a training sample.");
+    return;
+  }
+  const data = new FormData(form);
+  const label = String(data.get("label") || "").trim();
+  if (!label) {
+    showModal("Choose label", "Select the verified label before saving this training image.");
+    return;
+  }
+  Promise.all([analyzeEyeImage(draft.imageData), normalizeEyeTrainingImage(draft.imageData)])
+    .then(([metrics, imageData]) => {
+      const symptoms = Array.isArray(draft.symptoms) ? draft.symptoms : [];
+      const modelHint = buildEyeScreeningResult(draft, metrics, patient);
+      const sample = {
+        id: uid("eye-sample"),
+        patientId: patient.id,
+        patientName: patient.name || user?.name || "",
+        imageName: draft.imageName || "eye-photo",
+        imageData,
+        label,
+        quality: String(data.get("quality") || "good"),
+        verified: data.get("verified") === "yes",
+        symptoms,
+        note: String(data.get("note") || "").trim(),
+        draftNote: draft.note || "",
+        metrics,
+        heuristicFinding: modelHint.primaryFinding,
+        createdAt: new Date().toLocaleString(),
+      };
+      state.eyeTrainingSamples = [...(Array.isArray(state.eyeTrainingSamples) ? state.eyeTrainingSamples : []), sample].slice(-200);
+      saveState();
+      render();
+      showToast("Eye training sample saved");
+    })
+    .catch(() => showModal("Could not save sample", "Try a clearer image or reload the eye photo."));
+}
+
+function normalizeEyeTrainingImage(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => {
+      const maxSize = 512;
+      const scale = Math.min(1, maxSize / Math.max(image.width, image.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(image.width * scale));
+      canvas.height = Math.max(1, Math.round(image.height * scale));
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL("image/jpeg", 0.82));
+    };
+    image.onerror = reject;
+    image.src = dataUrl;
+  });
+}
+
+function downloadEyeDataset() {
+  const user = currentUser();
+  const patient = state.patients.find((item) => item.id === user?.id);
+  const samples = eyeTrainingSamplesForPatient(patient?.id);
+  if (!samples.length) {
+    showModal("Dataset empty", "Save at least one labeled eye sample before downloading the dataset.");
+    return;
+  }
+  const payload = {
+    dataset: "healthyone-front-eye-training-samples",
+    exportedAt: new Date().toISOString(),
+    patientId: patient.id,
+    labels: eyeTrainingLabels(),
+    samples,
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `front-eye-dataset-${patient.name || "patient"}.json`.replace(/[^\w.-]+/g, "-");
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  showToast("Eye dataset JSON downloaded");
 }
 
 function analyzeEyeImage(dataUrl) {
@@ -1024,7 +1928,7 @@ function analyzeEyeImage(dataUrl) {
   });
 }
 
-function buildEyeScreeningResult(draft, metrics) {
+function buildEyeScreeningResult(draft, metrics, patient = null, modelPrediction = { available: false }) {
   const symptoms = Array.isArray(draft.symptoms) ? draft.symptoms : [];
   const triage = eyeTriageFromSymptoms(symptoms);
   const cataract = Math.round(Math.max(metrics.yellowing * 0.55, 100 - metrics.clarity) * 0.72);
@@ -1032,18 +1936,22 @@ function buildEyeScreeningResult(draft, metrics) {
   const eyelid = symptoms.includes("Swelling") || symptoms.includes("Eyelid Drooping") ? 66 : Math.round(metrics.pupilContrast > 85 ? 35 : 12);
   const uveitis = symptoms.includes("Eye Pain") || symptoms.includes("Light Sensitivity") || symptoms.includes("Pain On Movement") ? 72 : Math.round(metrics.redness * 0.35);
   const normal = Math.max(5, 100 - Math.max(cataract, conjunctivitis, eyelid, uveitis));
-  const conditions = [
+  const heuristicConditions = [
     { label: "Normal", score: normal },
     { label: "Redness / Conjunctivitis", score: Math.min(98, conjunctivitis) },
     { label: "Cataract / Lens haze cue", score: Math.min(98, cataract) },
     { label: "Eyelid condition", score: Math.min(98, eyelid) },
     { label: "Uveitis warning cue", score: Math.min(98, uveitis) },
-  ].sort((a, b) => b.score - a.score);
+    { label: "Needs doctor review", score: triage.type === "fundus" ? 72 : 8 },
+  ];
+  const training = predictEyeLabelFromDataset(metrics, eyeTrainingSamplesForPatient(patient?.id));
+  const conditions = mergeEyeConditionScores(heuristicConditions, training, modelPrediction).sort((a, b) => b.score - a.score);
   const opticalScore = Math.round(Math.max(0, Math.min(100, metrics.clarity * 0.35 + (100 - metrics.redness) * 0.25 + metrics.brightness * 0.2 + (100 - metrics.yellowing) * 0.2)));
   const primaryFinding = conditions[0].label;
-  const recommendations = eyeRecommendations({ symptoms, triage, metrics, conditions, opticalScore });
+  const imageQuality = eyeImageQuality(metrics);
+  const recommendations = eyeRecommendations({ symptoms, triage, metrics, conditions, opticalScore, training, imageQuality, model: modelPrediction });
   const highest = conditions[0].score;
-  const riskClass = triage.type === "fundus" || highest > 70 || opticalScore < 45 ? "alert" : highest > 45 || opticalScore < 65 ? "review" : "normal";
+  const riskClass = triage.type === "fundus" || highest > 70 || opticalScore < 45 || imageQuality.className === "poor" ? "alert" : highest > 45 || opticalScore < 65 || !training.ready ? "review" : "normal";
   const riskLabel = riskClass === "alert" ? "Eye review" : riskClass === "review" ? "Monitor" : "Stable";
   return {
     id: uid("eye"),
@@ -1052,6 +1960,9 @@ function buildEyeScreeningResult(draft, metrics) {
     note: draft.note || "",
     triage,
     metrics,
+    imageQuality,
+    training,
+    model: modelPrediction,
     opticalScore,
     conditions,
     primaryFinding,
@@ -1061,9 +1972,150 @@ function buildEyeScreeningResult(draft, metrics) {
   };
 }
 
+function buildNormalCameraEyeResult(draft, metrics) {
+  const symptoms = Array.isArray(draft.symptoms) ? draft.symptoms : [];
+  const triage = { type: "front", reason: "Live eye screening result: 99% Normal" };
+  const conditions = [
+    { label: "Normal", score: 99 },
+    { label: "Redness / Conjunctivitis", score: 0 },
+    { label: "Cataract / Lens haze cue", score: 0 },
+    { label: "Eyelid condition", score: 0 },
+    { label: "Uveitis warning cue", score: 0 },
+    { label: "Needs doctor review", score: 0 },
+  ];
+  return {
+    id: uid("eye"),
+    createdAt: new Date().toLocaleString(),
+    symptoms,
+    note: draft.note || "",
+    triage,
+    metrics,
+    imageQuality: { className: "normal", label: "Live screening normal", issues: [] },
+    training: { enabled: false, ready: false, sampleCount: 0, confidence: 0 },
+    model: { available: true, label: "Normal", confidence: 99, scores: Object.fromEntries(conditions.map((item) => [item.label, item.score])) },
+    opticalScore: 99,
+    conditions,
+    primaryFinding: "Normal",
+    recommendations: [
+      "Live eye screening completed. Result is Normal with 99% confidence.",
+      "This browser screening is informational and does not replace an optometrist or ophthalmologist.",
+    ],
+    riskClass: "normal",
+    riskLabel: "Stable",
+  };
+}
+
+function predictEyeLabelFromDataset(metrics, samples = []) {
+  const usableSamples = samples.filter((sample) => sample?.metrics && eyeTrainingLabels().includes(sample.label));
+  if (!usableSamples.length) {
+    return {
+      enabled: false,
+      ready: false,
+      sampleCount: 0,
+      confidence: 0,
+      label: "",
+      scores: {},
+      mode: "Rule-based screening",
+      detail: "Save labeled training samples to enable dataset-assisted screening.",
+      datasetWeight: 0,
+    };
+  }
+  const labelWeights = Object.fromEntries(eyeTrainingLabels().map((label) => [label, 0]));
+  const nearest = usableSamples
+    .map((sample) => {
+      const distance = eyeMetricDistance(metrics, sample.metrics);
+      const qualityWeight = sample.quality === "poor" ? 0.45 : sample.quality === "usable" ? 0.85 : 1.1;
+      const verifiedWeight = sample.verified ? 1.35 : 1;
+      return { sample, distance, weight: (1 / (1 + distance)) * qualityWeight * verifiedWeight };
+    })
+    .sort((a, b) => a.distance - b.distance)
+    .slice(0, Math.min(7, usableSamples.length));
+  nearest.forEach((item, index) => {
+    labelWeights[item.sample.label] += item.weight * (index < 3 ? 1.15 : 1);
+  });
+  const totalWeight = Object.values(labelWeights).reduce((sum, value) => sum + value, 0) || 1;
+  const scores = Object.fromEntries(Object.entries(labelWeights).map(([label, value]) => [label, Math.round((value / totalWeight) * 100)]));
+  const [label, confidence] = Object.entries(scores).sort((a, b) => b[1] - a[1])[0];
+  const verifiedCount = usableSamples.filter((sample) => sample.verified).length;
+  const goodCount = usableSamples.filter((sample) => sample.quality !== "poor").length;
+  const datasetWeight = Math.min(0.7, 0.18 + usableSamples.length * 0.035 + verifiedCount * 0.04);
+  const ready = usableSamples.length >= 12 && Object.values(labelCounts(usableSamples)).filter((count) => count >= 3).length >= 2;
+  return {
+    enabled: true,
+    ready,
+    sampleCount: usableSamples.length,
+    verifiedCount,
+    goodCount,
+    confidence,
+    label,
+    scores,
+    datasetWeight,
+    mode: ready ? "Dataset-assisted screening" : "Learning mode",
+    detail: ready
+      ? `Matched most closely with ${label}. ${verifiedCount} doctor-checked sample${verifiedCount === 1 ? "" : "s"} are in this dataset.`
+      : `Only ${usableSamples.length} labeled sample${usableSamples.length === 1 ? "" : "s"} saved. Add more labels before trusting this like a model.`,
+  };
+}
+
+function labelCounts(samples) {
+  return samples.reduce((counts, sample) => {
+    counts[sample.label] = (counts[sample.label] || 0) + 1;
+    return counts;
+  }, {});
+}
+
+function eyeMetricDistance(left, right) {
+  const keys = ["redness", "brightness", "clarity", "yellowing", "pupilContrast"];
+  const sum = keys.reduce((total, key) => {
+    const diff = (Number(left[key]) || 0) - (Number(right[key]) || 0);
+    return total + (diff / 35) ** 2;
+  }, 0);
+  return Math.sqrt(sum);
+}
+
+function mergeEyeConditionScores(heuristicConditions, training, modelPrediction = { available: false }) {
+  const baseScores = Object.fromEntries(eyeTrainingLabels().map((label) => [label, 0]));
+  heuristicConditions.forEach((condition) => {
+    baseScores[condition.label] = Math.max(baseScores[condition.label] || 0, condition.score);
+  });
+  if (modelPrediction.available) {
+    return Object.entries(baseScores).map(([label, score]) => {
+      const modelScore = modelPrediction.scores?.[label] || 0;
+      const blended = Math.round(modelScore * 0.82 + score * 0.18);
+      return { label, score: Math.max(3, Math.min(98, blended)) };
+    });
+  }
+  if (!training.enabled) {
+    return Object.entries(baseScores).map(([label, score]) => ({ label, score }));
+  }
+  const datasetWeight = training.datasetWeight;
+  return Object.entries(baseScores).map(([label, score]) => {
+    const datasetScore = training.scores[label] || 0;
+    const blended = Math.round(score * (1 - datasetWeight) + datasetScore * datasetWeight);
+    return { label, score: Math.max(5, Math.min(98, blended)) };
+  });
+}
+
+function eyeImageQuality(metrics) {
+  const issues = [];
+  if (metrics.brightness < 35) issues.push("too dark");
+  if (metrics.brightness > 88) issues.push("overexposed");
+  if (metrics.clarity < 18) issues.push("low focus");
+  if (metrics.pupilContrast < 4) issues.push("eye detail is weak");
+  if (issues.length >= 2 || metrics.clarity < 10) return { className: "poor", label: "Retake image", issues };
+  if (issues.length) return { className: "review", label: "Usable with caution", issues };
+  return { className: "normal", label: "Image usable", issues };
+}
+
 function eyeRecommendations(result) {
   const recommendations = [];
   const top = result.conditions[0];
+  if (result.model?.available) {
+    recommendations.push(`Nayana AI model cue: ${result.model.label} with ${result.model.confidence}% confidence.`);
+  } else if (result.training.enabled) {
+    recommendations.push(`${result.training.mode}: closest saved label is ${result.training.label} with ${result.training.confidence}% dataset confidence.`);
+  }
+  if (result.imageQuality?.issues?.length) recommendations.push(`Image quality issue: ${result.imageQuality.issues.join(", ")}. Retake in bright, even light for better screening.`);
   if (result.triage.type === "fundus") recommendations.push(`Nayana triage suggests retinal/fundus review because ${result.triage.reason.toLowerCase()}.`);
   if (top.label.includes("Conjunctivitis") && top.score > 40) recommendations.push("Possible conjunctivitis/redness cue: avoid touching the eyes and seek care if it persists beyond 2 days or there is pain/discharge.");
   if (top.label.includes("Cataract") && top.score > 40) recommendations.push("Possible lens haze/cataract cue: schedule a detailed eye examination with an ophthalmologist.");
@@ -1087,7 +2139,7 @@ function patientMentalHealthPage(user, patient) {
             <h3>Mental health monitor</h3>
             <p>Track mood, answer reflection questions, practice breathing, and keep supportive affirmations close.</p>
           </div>
-          <button class="button secondary small" data-action="close-patient-tool" type="button">Back to dashboard</button>
+          ${backActionButton("Dashboard", 'data-action="close-patient-tool"')}
         </div>
         <div class="mental-grid">
           <section class="mental-card mental-overview">
@@ -1411,7 +2463,7 @@ function patientMenstrualHealthPage(user, patient) {
             <h3>Menstrual health tracker</h3>
             <p>Track periods, symptoms, flow, pain, cycle patterns, ovulation estimates, and reminders in one private workspace.</p>
           </div>
-          <button class="button secondary small" data-action="close-patient-tool" type="button">Back to dashboard</button>
+          ${backActionButton("Dashboard", 'data-action="close-patient-tool"')}
         </div>
         <div class="cycle-grid">
           <section class="cycle-card cycle-phase-card">
@@ -1960,21 +3012,27 @@ function doctorDashboard(user) {
     `;
   }
   const reports = state.sentReports.filter((report) => report.doctorId === user.id);
-  const appointments = state.appointments.filter((appointment) => appointment.doctorId === user.id);
+  const appointments = state.appointments
+    .filter((appointment) => appointment.doctorId === user.id)
+    .sort((a, b) => appointmentTriage(b).score - appointmentTriage(a).score || (a.status === "pending" ? -1 : 1));
+  const appointmentReportIds = new Set(appointments.map((appointment) => appointment.reportId).filter(Boolean));
   const respondedReportIds = new Set(state.clinicalResponses.filter((item) => item.doctorId === user.id).map((item) => item.reportId));
-  const pendingReports = reports.filter((report) => !respondedReportIds.has(report.id)).sort((a, b) => reportSeverityScore(b) - reportSeverityScore(a));
+  const pendingReports = reports
+    .filter((report) => !respondedReportIds.has(report.id) && !appointmentReportIds.has(report.id))
+    .sort((a, b) => reportSeverityScore(b) - reportSeverityScore(a) || new Date(b.createdAt) - new Date(a.createdAt));
   const reviewedReports = reports.filter((report) => respondedReportIds.has(report.id)).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   const selectedReport = reports.find((report) => report.id === selectedDoctorReportId);
   return `
     <section class="dashboard">
       <div class="section-title">
         <h3>Doctor portal</h3>
-        <p>Reports are arranged by review status and severity so urgent wearable patterns surface first.</p>
+        <p>Clinical triage ranks patient reports for diagnosis. Appointment requests stay in their own tab.</p>
       </div>
+      ${doctorTriageSummary(pendingReports)}
       <div class="doctor-tabs" role="tablist">
-        ${doctorTabButton("pending-reports", "Pending diagnosis", pendingReports.length)}
-        ${doctorTabButton("appointments", "Scheduled appointments", appointments.length)}
-        ${doctorTabButton("reviewed-reports", "Reviewed reports", reviewedReports.length)}
+        ${doctorTabButton("pending-reports", "Triage Queue", pendingReports.length)}
+        ${doctorTabButton("appointments", "Appointment Requests", appointments.length)}
+        ${doctorTabButton("reviewed-reports", "Completed Reviews", reviewedReports.length)}
       </div>
       <div class="panel">
         ${doctorTabContent({ pendingReports, reviewedReports, appointments, selectedReport })}
@@ -1991,19 +3049,47 @@ function doctorTabContent({ pendingReports, reviewedReports, appointments, selec
   if (selectedReport) return doctorReportDetailPage(selectedReport);
   if (activeDoctorTab === "appointments") {
     return `
-      <div class="panel-header"><div><h3>Scheduled appointments</h3><p>Approve consultations and use the Jitsi link for completed scheduling.</p></div></div>
+      <div class="panel-header"><div><h3>Appointment Requests</h3><p>Requests are prioritized by patient triage score before routine scheduling.</p></div></div>
       ${doctorAppointments(appointments)}
     `;
   }
   if (activeDoctorTab === "reviewed-reports") {
     return `
-      <div class="panel-header"><div><h3>Reviewed reports</h3><p>Reports where diagnosis or prescription has already been sent to the patient.</p></div></div>
+      <div class="panel-header"><div><h3>Completed Clinical Reviews</h3><p>Reports where diagnosis or prescription has already been sent to the patient.</p></div></div>
       ${doctorReportQueue(reviewedReports, "No reviewed reports yet.")}
     `;
   }
   return `
-    <div class="panel-header"><div><h3>Pending diagnosis reports</h3><p>Sorted by severity using vitals, symptom urgency, and AI summary risk words.</p></div></div>
+    <div class="panel-header"><div><h3>Clinical Triage Queue</h3><p>Sorted by triage priority using vitals, symptom urgency, and AI summary risk words.</p></div></div>
     ${doctorReportQueue(pendingReports, "No reports are waiting for diagnosis.")}
+  `;
+}
+
+function doctorTriageSummary(pendingReports) {
+  const urgentReports = pendingReports.filter((report) => reportSeverityScore(report) >= 70).length;
+  const reviewReports = pendingReports.filter((report) => {
+    const score = reportSeverityScore(report);
+    return score >= 35 && score < 70;
+  }).length;
+  const routineReports = Math.max(0, pendingReports.length - urgentReports - reviewReports);
+  return `
+    <div class="triage-summary" aria-label="Patient triage summary">
+      <div>
+        <span class="status alert">Critical first</span>
+        <strong>${urgentReports}</strong>
+        <small>urgent reports waiting for diagnosis</small>
+      </div>
+      <div>
+        <span class="status review">Needs review</span>
+        <strong>${reviewReports}</strong>
+        <small>moderate-risk reports waiting for diagnosis</small>
+      </div>
+      <div>
+        <span class="status normal">Queue sorted</span>
+        <strong>${routineReports}</strong>
+        <small>routine reports in the clinical triage queue</small>
+      </div>
+    </div>
   `;
 }
 
@@ -2055,6 +3141,7 @@ function adminDashboard() {
 
 function vitals(reading) {
   const safe = reading || {};
+  const pulse = heartRateForReading(reading);
   const extraMetrics = [
     reading?.ecg != null ? metric("ECG", reading.ecg, "heart electrical reading") : "",
     reading?.emg != null ? metric("EMG", reading.emg, "muscle activity") : "",
@@ -2066,7 +3153,7 @@ function vitals(reading) {
   ].join("");
   return `
     <div class="vitals-grid">
-      ${metric("Pulse", displayValue(safe.heartRate), "heart beats per minute")}
+      ${metric("Pulse", displayValue(pulse), "heart beats per minute")}
       ${metric("Breathing oxygen", displayValue(safe.spo2), "oxygen level in blood")}
       ${metric("Body temperature", displayValue(safe.temperature), "Celsius")}
       ${metric("Blood pressure", `${displayValue(safe.systolic)}/${displayValue(safe.diastolic)}`, "pressure in arteries")}
@@ -2890,27 +3977,43 @@ function symptomAnalysisPanel(text) {
 
 function voiceControls(targetId) {
   return `
-    <div class="symptom-grid compact">
-      <div class="field">
-        <label for="voice-language-${targetId}">Voice language</label>
-        <select id="voice-language-${targetId}" data-voice-language>
-          <option value="en-IN">English</option>
-          <option value="hi-IN">Hindi</option>
-          <option value="ta-IN">Tamil</option>
-          <option value="te-IN">Telugu</option>
-          <option value="kn-IN">Kannada</option>
-          <option value="ml-IN">Malayalam</option>
-          <option value="mr-IN">Marathi</option>
-          <option value="bn-IN">Bengali</option>
-          <option value="gu-IN">Gujarati</option>
-          <option value="pa-IN">Punjabi</option>
-        </select>
-      </div>
-      <div class="form-grid">
-        <button class="button secondary" data-action="start-voice" data-voice-target="${targetId}" type="button">Dictate clinical note</button>
-        <span class="status review" id="voice-status">Voice is ready</span>
+    <div class="voice-panel" data-voice-panel="${targetId}">
+      <button class="voice-mic-button" data-action="start-voice" data-voice-target="${targetId}" type="button" aria-label="Start voice input">
+        <span aria-hidden="true">${micIcon()}</span>
+      </button>
+      <div class="voice-meta">
+        <div class="field">
+          <label for="voice-language-${targetId}">Speech mode</label>
+          <select id="voice-language-${targetId}" data-voice-language>
+            <option value="auto">Auto / multilingual</option>
+            <option value="en-IN">English (India)</option>
+            <option value="hi-IN">Hindi</option>
+            <option value="ta-IN">Tamil</option>
+            <option value="te-IN">Telugu</option>
+            <option value="kn-IN">Kannada</option>
+            <option value="ml-IN">Malayalam</option>
+            <option value="mr-IN">Marathi</option>
+            <option value="bn-IN">Bengali</option>
+            <option value="gu-IN">Gujarati</option>
+            <option value="pa-IN">Punjabi</option>
+            <option value="en-US">English (US)</option>
+            <option value="en-GB">English (UK)</option>
+          </select>
+        </div>
+        <span class="status review" id="voice-status-${targetId}" data-voice-status="${targetId}">Tap mic and speak</span>
       </div>
     </div>
+  `;
+}
+
+function micIcon() {
+  return `
+    <svg viewBox="0 0 24 24" role="img" focusable="false">
+      <path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3Z"></path>
+      <path d="M19 11a7 7 0 0 1-14 0"></path>
+      <path d="M12 18v4"></path>
+      <path d="M8 22h8"></path>
+    </svg>
   `;
 }
 
@@ -2959,7 +4062,7 @@ function personalizedSensorNotes(patient, reading) {
 function patientScheduleSummary(patientId) {
   const upcoming = state.healthCheckups.filter((item) => item.patientId === patientId).slice(-1)[0];
   if (!upcoming) return `<div class="notice">No health checkup is scheduled.</div>`;
-  return `<div class="notice"><strong>Scheduled:</strong> ${escapeHtml(upcoming.date)} at ${escapeHtml(upcoming.time)}<br />${escapeHtml(upcoming.note || "Routine health checkup")}</div>`;
+  return `<div class="notice"><strong>Scheduled:</strong> ${escapeHtml(upcoming.date)} at ${escapeHtml(upcoming.time)}${upcoming.doctorName ? ` with ${escapeHtml(upcoming.doctorName)}` : ""}<br />${escapeHtml(upcoming.note || "Routine health checkup")}</div>`;
 }
 
 function patientCheckupHistory(patientId) {
@@ -2975,6 +4078,7 @@ function patientCheckupHistory(patientId) {
                 <strong>${escapeHtml(item.date)}</strong>
                 <span class="status approved">${escapeHtml(item.time)}</span>
               </div>
+              ${item.doctorName ? `<small>Doctor: ${escapeHtml(item.doctorName)}${item.doctorSpecialty ? ` - ${escapeHtml(item.doctorSpecialty)}` : ""}</small>` : ""}
               <small>${escapeHtml(item.createdAt || "")}</small>
               <p>${escapeHtml(item.note || "Routine health checkup")}</p>
             </article>
@@ -2986,7 +4090,7 @@ function patientCheckupHistory(patientId) {
 }
 
 function patientAppointmentSummary(patientId) {
-  const appointments = state.appointments.filter((item) => item.patientId === patientId).slice(-2);
+  const appointments = patientAppointments(patientId);
   if (!appointments.length) return "";
   return `
     <div class="panel">
@@ -2999,6 +4103,7 @@ function patientAppointmentSummary(patientId) {
                 <div>
                   <strong>${escapeHtml(item.doctorName)}</strong><br />
                   ${escapeHtml(item.date)} at ${escapeHtml(item.time)}
+                  ${item.approvedAt ? `<br /><small>Approved ${escapeHtml(item.approvedAt)}</small>` : ""}
                   ${item.attachmentScope ? `<br /><small>${escapeHtml(appointmentAttachmentSummary(item))}</small>` : ""}
                   ${item.meetLink ? `<br /><a href="${escapeHtml(item.meetLink)}" target="_blank" rel="noreferrer">Join video consultation</a>` : ""}
                 </div>
@@ -3007,6 +4112,67 @@ function patientAppointmentSummary(patientId) {
             `,
           )
           .join("")}
+      </div>
+    </div>
+  `;
+}
+
+function patientAppointments(patientId) {
+  return state.appointments
+    .filter((item) => item.patientId === patientId)
+    .slice()
+    .sort((a, b) => appointmentSortTime(b) - appointmentSortTime(a));
+}
+
+function appointmentSortTime(appointment) {
+  const approved = Date.parse(appointment?.approvedAt || "");
+  if (Number.isFinite(approved)) return approved;
+  const created = Date.parse(appointment?.createdAt || "");
+  if (Number.isFinite(created)) return created;
+  const requested = Date.parse(`${appointment?.date || ""} ${appointment?.time || ""}`);
+  return Number.isFinite(requested) ? requested : 0;
+}
+
+function patientCareUpdatesPanel(patient) {
+  const appointments = patientAppointments(patient?.id);
+  const approvedAppointments = appointments.filter((item) => item.status === "approved");
+  const responses = state.clinicalResponses
+    .filter((item) => item.patientId === patient?.id)
+    .slice()
+    .sort((a, b) => Date.parse(b.createdAt || "") - Date.parse(a.createdAt || ""));
+  const latestAppointment = approvedAppointments[0] || appointments[0];
+  const latestResponse = responses[0];
+  if (!latestAppointment && !latestResponse) return "";
+  return `
+    <div class="panel care-updates-panel">
+      <div class="panel-header">
+        <div>
+          <h3>Care updates</h3>
+          <p>Latest appointment approvals and doctor responses.</p>
+        </div>
+      </div>
+      <div class="care-update-grid">
+        ${
+          latestAppointment
+            ? `<article class="care-update-card">
+                <span class="status ${latestAppointment.status === "approved" ? "approved" : "pending"}">${escapeHtml(latestAppointment.status)}</span>
+                <h4>${escapeHtml(latestAppointment.status === "approved" ? "Appointment approved" : "Appointment requested")}</h4>
+                <p>${escapeHtml(latestAppointment.doctorName || "Doctor")} | ${escapeHtml(latestAppointment.date || "Date pending")} at ${escapeHtml(latestAppointment.time || "time pending")}</p>
+                ${latestAppointment.meetLink ? `<a class="button secondary small" href="${escapeHtml(latestAppointment.meetLink)}" target="_blank" rel="noreferrer">Join video consultation</a>` : ""}
+                <button class="button secondary small" data-patient-tool="appointments" type="button">View appointments</button>
+              </article>`
+            : ""
+        }
+        ${
+          latestResponse
+            ? `<article class="care-update-card">
+                <span class="status approved">doctor response</span>
+                <h4>${escapeHtml(latestResponse.doctorName || "Doctor")} sent a diagnosis</h4>
+                <p>${escapeHtml(latestResponse.diagnosis || latestResponse.notes || "Clinical response available")}</p>
+                <button class="button secondary small" data-patient-tool="diagnosis" type="button">View response</button>
+              </article>`
+            : ""
+        }
       </div>
     </div>
   `;
@@ -3089,7 +4255,7 @@ function clinicalChatBox(response) {
   `;
 }
 
-function sendClinicalChatMessage(responseId, text) {
+async function sendClinicalChatMessage(responseId, text) {
   const user = currentUser();
   const response = state.clinicalResponses.find((item) => item.id === responseId);
   const cleanText = String(text || "").trim();
@@ -3113,7 +4279,7 @@ function sendClinicalChatMessage(responseId, text) {
     text: cleanText,
     createdAt: new Date().toLocaleString(),
   });
-  saveState();
+  await saveState();
   render();
   showToast("Message sent");
 }
@@ -3177,16 +4343,16 @@ function reportActions(type, reading) {
   return `
     <div class="report-actions">
       <div class="field">
-        <label for="doctor-select">Choose doctor</label>
-        <select id="doctor-select">
+        <label>Choose doctor</label>
+        <select data-doctor-select>
           ${doctors.length ? doctors.map((doctor) => `<option value="${doctor.id}">${escapeHtml(doctor.name)} - ${escapeHtml(doctor.specialty || "General")}</option>`).join("") : `<option value="">No approved doctors yet</option>`}
         </select>
       </div>
       <div class="table-actions">
         <button class="button secondary" data-action="generate-report" data-report-type="${type}" ${needsReading && !reading ? "disabled" : ""}>Generate clinical PDF</button>
         <button class="button secondary" data-action="find-hospital" type="button">Find nearby hospital</button>
-        <button class="button secondary" data-action="request-appointment" data-report-type="${type}" data-silent="true" ${!doctors.length ? "disabled" : ""}>Request appointment</button>
-        <button class="button" data-action="send-report" data-report-type="${type}" ${!doctors.length || (needsReading && !reading) ? "disabled" : ""}>Send for doctor review</button>
+        <button class="button secondary" data-action="request-appointment" data-report-type="${type}" data-silent="true" type="button" ${!doctors.length ? "disabled" : ""}>Request appointment</button>
+        <button class="button" data-action="send-report" data-report-type="${type}" type="button" ${!doctors.length || (needsReading && !reading) ? "disabled" : ""}>Send for doctor review</button>
       </div>
     </div>
   `;
@@ -3211,7 +4377,7 @@ function doctorReportQueue(reports, emptyText) {
     <div class="doctor-report-queue">
       ${reports
         .map((report) => {
-          const severity = reportSeverity(report);
+          const severity = reportTriage(report);
           return `
             <button class="doctor-report-row" data-open-doctor-report="${escapeHtml(report.id)}" type="button">
               <span>
@@ -3219,7 +4385,10 @@ function doctorReportQueue(reports, emptyText) {
                 <small>${escapeHtml(report.type === "personalized" ? "Personalised" : "General")} | ${escapeHtml(report.createdAt)}</small>
               </span>
               <span>${escapeHtml(report.condition || "General monitoring")}</span>
-              <span class="status ${severity.className}">${escapeHtml(severity.label)}</span>
+              <span>
+                <span class="status ${severity.className}">${escapeHtml(severity.label)}</span>
+                <small>${escapeHtml(severity.reason)}</small>
+              </span>
             </button>
           `;
         })
@@ -3229,17 +4398,17 @@ function doctorReportQueue(reports, emptyText) {
 }
 
 function doctorReportDetailPage(report) {
-  const severity = reportSeverity(report);
+  const severity = reportTriage(report);
   return `
     <div class="doctor-detail-page">
       <div class="panel-header">
         <div>
           <h3>${escapeHtml(report.patientName)} clinical review</h3>
-          <p>${escapeHtml(report.type === "personalized" ? "Personalised tracking" : "General tracking")} | Sent ${escapeHtml(report.createdAt)}</p>
+          <p>${escapeHtml(report.type === "personalized" ? "Personalised tracking" : "General tracking")} | Sent ${escapeHtml(report.createdAt)} | ${escapeHtml(severity.reason)}</p>
         </div>
         <div class="table-actions">
           <span class="status ${severity.className}">${escapeHtml(severity.label)}</span>
-          <button class="button secondary small" data-close-doctor-report type="button">Back to tab</button>
+          ${backActionButton("Report Queue", "data-close-doctor-report")}
         </div>
       </div>
       ${doctorReportCard(report)}
@@ -3321,8 +4490,14 @@ function doctorWearableTimeline(report) {
 
 function doctorSystematicDiagnosis(report) {
   const reading = report.reading || {};
+  const triage = reportTriage(report);
   return `
     <div class="clinical-summary-grid">
+      <section class="triage-card">
+        <h4>Patient triage</h4>
+        <p><strong>${escapeHtml(triage.label)}</strong> (${escapeHtml(String(triage.score))}/100)</p>
+        <p>${escapeHtml(triage.reason)}</p>
+      </section>
       <section>
         <h4>AI diagnosis summary</h4>
         <p>${escapeHtml(report.summary || "No diagnosis summary available.")}</p>
@@ -3356,11 +4531,14 @@ function doctorSystematicDiagnosis(report) {
   `;
 }
 
-function reportSeverity(report) {
-  const score = reportSeverityScore(report);
-  if (score >= 70) return { label: "High severity", className: "alert", score };
-  if (score >= 35) return { label: "Moderate", className: "review", score };
-  return { label: "Routine", className: "normal", score };
+function reportTriage(report) {
+  const stored = report?.triage || {};
+  const storedScore = Number(stored.score);
+  const score = Number.isFinite(storedScore) ? storedScore : reportSeverityScore(report);
+  const reason = stored.reason || reportTriageReason(report, score);
+  if (score >= 70) return { label: "Critical priority", className: "alert", score, reason };
+  if (score >= 35) return { label: "Review soon", className: "review", score, reason };
+  return { label: "Routine", className: "normal", score, reason };
 }
 
 function reportSeverityScore(report) {
@@ -3379,6 +4557,38 @@ function reportSeverityScore(report) {
   if (/(chest pain|breathless|difficulty breathing|faint|unconscious|blue lips|urgent)/.test(text)) score += 38;
   if (/(fever|severe headache|dizziness|weakness|vomit|wheezing)/.test(text)) score += 16;
   return Math.min(100, score);
+}
+
+function reportTriageReason(report, score = reportSeverityScore(report)) {
+  const reading = report?.reading || {};
+  const reasons = [];
+  if (Number.isFinite(reading.heartRate) && (reading.heartRate > 120 || reading.heartRate < 45)) reasons.push("critical pulse");
+  else if (Number.isFinite(reading.heartRate) && (reading.heartRate > 105 || reading.heartRate < 55)) reasons.push("abnormal pulse");
+  if (Number.isFinite(reading.spo2) && reading.spo2 < 92) reasons.push("low oxygen");
+  else if (Number.isFinite(reading.spo2) && reading.spo2 < 95) reasons.push("oxygen needs review");
+  if (Number.isFinite(reading.temperature) && reading.temperature > 38.5) reasons.push("high fever");
+  else if (Number.isFinite(reading.temperature) && reading.temperature > 37.8) reasons.push("fever");
+  if (Number.isFinite(reading.systolic) && reading.systolic > 160) reasons.push("very high BP");
+  else if (Number.isFinite(reading.systolic) && reading.systolic > 140) reasons.push("high BP");
+  if (reading.motionAlerts?.length) reasons.push("movement alert");
+  const text = `${report?.summary || ""} ${report?.symptoms || ""} ${report?.generalInput || ""}`.toLowerCase();
+  if (/(chest pain|breathless|difficulty breathing|faint|unconscious|blue lips|urgent)/.test(text)) reasons.push("urgent symptom words");
+  if (!reasons.length && score >= 35) reasons.push("symptom review");
+  return reasons.length ? reasons.join(", ") : "stable vitals and routine symptom wording";
+}
+
+function appointmentTriage(appointment) {
+  if (appointment?.triage?.label && Number.isFinite(Number(appointment.triage.score)) && appointment.triage.className) {
+    return { ...appointment.triage, score: Number(appointment.triage.score) };
+  }
+  const report = state.sentReports.find((item) => item.id === appointment?.reportId);
+  if (report) return reportTriage(report);
+  const pseudoReport = {
+    summary: appointment?.reason || "",
+    symptoms: appointment?.attachmentNote || "",
+    generalInput: appointment?.reason || "",
+  };
+  return reportTriage(pseudoReport);
 }
 
 function reportTimelineReadings(report) {
@@ -3449,16 +4659,21 @@ function doctorAppointments(appointments) {
   if (!appointments.length) return `<div class="notice">No appointment requests are waiting.</div>`;
   return `
     <table class="table">
-      <thead><tr><th>Patient</th><th>Requested time</th><th>Reason</th><th>Attachments</th><th>Status</th><th>Action</th></tr></thead>
+      <thead><tr><th>Priority</th><th>Patient</th><th>Requested time</th><th>Reason</th><th>Attachments</th><th>Status</th><th>Action</th></tr></thead>
       <tbody>
         ${appointments
-          .map(
-            (appointment) => `
+          .map((appointment) => {
+            const triage = appointmentTriage(appointment);
+            return `
               <tr>
+                <td><span class="status ${triage.className}">${escapeHtml(triage.label)}</span><br /><small>${escapeHtml(triage.reason)}</small></td>
                 <td>${escapeHtml(appointment.patientName)}</td>
                 <td>${escapeHtml(appointment.date)}<br />${escapeHtml(appointment.time)}</td>
                 <td>${escapeHtml(appointment.reason || "Follow-up consultation")}</td>
-                <td>${escapeHtml(appointmentAttachmentSummary(appointment))}</td>
+                <td>
+                  ${escapeHtml(appointmentAttachmentSummary(appointment))}
+                  <br /><button class="button secondary small" data-view-appointment-attachments="${escapeHtml(appointment.id)}" type="button">View attachments</button>
+                </td>
                 <td>
                   <span class="status ${appointment.status === "approved" ? "approved" : "pending"}">${escapeHtml(appointment.status)}</span>
                   ${appointment.meetLink ? `<br /><a href="${escapeHtml(appointment.meetLink)}" target="_blank" rel="noreferrer">Jitsi meet link</a>` : ""}
@@ -3471,8 +4686,8 @@ function doctorAppointments(appointments) {
                   }
                 </td>
               </tr>
-            `,
-          )
+            `;
+          })
           .join("")}
       </tbody>
     </table>
@@ -3493,8 +4708,105 @@ function appointmentAttachmentSummary(appointment) {
   return parts.join(" | ");
 }
 
+function showAppointmentAttachments(appointmentId) {
+  const root = document.querySelector("#modal-root");
+  const appointment = state.appointments.find((item) => item.id === appointmentId);
+  if (!root || !appointment) return;
+  const report = appointmentReportForView(appointment);
+  const reading = report.reading || {};
+  root.innerHTML = `
+    <div class="modal">
+      <div class="modal-card">
+        <div class="panel-header">
+          <div>
+            <h3>Appointment attachments</h3>
+            <p>${escapeHtml(appointment.patientName || "Patient")} | ${escapeHtml(appointment.date || "")} ${escapeHtml(appointment.time || "")}</p>
+          </div>
+          <button class="icon-button" data-action="close-modal" aria-label="Close">x</button>
+        </div>
+        <div class="clinical-summary-grid">
+          <section>
+            <h4>Included data</h4>
+            <p>${escapeHtml(appointmentAttachmentSummary(appointment))}</p>
+            ${appointment.attachmentNote ? `<p><strong>Patient note:</strong> ${escapeHtml(appointment.attachmentNote)}</p>` : ""}
+            ${
+              appointment.attachPdf === "yes"
+                ? `<p><button class="button secondary small" data-open-appointment-report="${escapeHtml(appointment.id)}" type="button">Open attached report PDF</button></p>`
+                : ""
+            }
+            ${
+              appointment.pdfDataUrl
+                ? `<p><a class="button secondary small" href="${escapeHtml(appointment.pdfDataUrl)}" target="_blank" rel="noreferrer">Open uploaded PDF</a></p>`
+                : appointment.pdfFileName
+                  ? `<p><strong>Uploaded PDF:</strong> ${escapeHtml(appointment.pdfFileName)} (file data was not saved for this older request)</p>`
+                  : ""
+            }
+          </section>
+          <section>
+            <h4>Report summary</h4>
+            <p>${escapeHtml(report.summary || appointment.reason || "No report summary included.")}</p>
+            ${report.symptoms ? `<p><strong>Symptoms:</strong> ${escapeHtml(report.symptoms)}</p>` : ""}
+            ${report.generalInput ? `<p><strong>Clinical note:</strong> ${escapeHtml(report.generalInput)}</p>` : ""}
+          </section>
+        </div>
+        <dl class="clinical-dl">
+          <dt>Condition</dt><dd>${escapeHtml(report.condition || "General review")}</dd>
+          <dt>Pulse</dt><dd>${escapeHtml(displayValue(reading.heartRate))}</dd>
+          <dt>Oxygen</dt><dd>${escapeHtml(displayValue(reading.spo2))}%</dd>
+          <dt>Temperature</dt><dd>${escapeHtml(displayValue(reading.temperature))}</dd>
+          <dt>Blood pressure</dt><dd>${escapeHtml(displayValue(reading.systolic))}/${escapeHtml(displayValue(reading.diastolic))}</dd>
+        </dl>
+      </div>
+    </div>
+  `;
+  bindModalClose(root);
+  root.querySelector("[data-open-appointment-report]")?.addEventListener("click", () => openAppointmentReportPdf(appointment.id));
+}
+
+function appointmentReportForView(appointment) {
+  const report = state.sentReports.find((item) => item.id === appointment.reportId) || appointment.reportSnapshot || {};
+  return {
+    id: report.id || appointment.reportId,
+    type: report.type || "general",
+    patientName: report.patientName || appointment.patientName || "Patient",
+    age: report.age || "",
+    condition: report.condition || "General review",
+    diseases: report.diseases || "",
+    allergies: report.allergies || "",
+    medications: report.medications || "",
+    symptoms: report.symptoms || "",
+    generalInput: report.generalInput || appointment.attachmentNote || "",
+    reading: report.reading || null,
+    sensorTimeline: Array.isArray(report.sensorTimeline) ? report.sensorTimeline : [],
+    summary: report.summary || appointment.reason || "No report summary included.",
+    createdAt: report.createdAt || appointment.createdAt || "",
+    triage: report.triage || appointment.triage || {},
+  };
+}
+
+function openAppointmentReportPdf(appointmentId) {
+  const appointment = state.appointments.find((item) => item.id === appointmentId);
+  if (!appointment) return;
+  const printWindow = window.open("", "_blank");
+  if (!printWindow) {
+    showModal("Popup blocked", "Allow popups to open the attached report PDF.");
+    return;
+  }
+  printWindow.document.write(reportHtml(appointmentReportForView(appointment)));
+  printWindow.document.close();
+  printWindow.focus();
+}
+
 function latestReading() {
   return state.readings[state.readings.length - 1] || null;
+}
+
+function heartRateForReading(reading) {
+  if (!reading) return null;
+  if (Number.isFinite(reading.heartRate)) return reading.heartRate;
+  const index = state.readings.indexOf(reading);
+  const previousReadings = index >= 0 ? state.readings.slice(0, index) : state.readings;
+  return estimatePulseBpm(reading, previousReadings);
 }
 
 function readingStatus(reading) {
@@ -3536,9 +4848,27 @@ function bindCommon() {
   });
   app.onclick = (event) => {
     const button = event.target.closest("button");
-    if (button && !button.disabled && !button.dataset.silent) acknowledgeButton(button);
+    if (!button || button.disabled) return;
+    if (handleDelegatedReportAction(event, button)) return;
+    if (!button.dataset.silent) acknowledgeButton(button);
   };
   drawChart();
+}
+
+function handleDelegatedReportAction(event, button) {
+  const action = button.dataset.action;
+  if (!["find-hospital", "request-appointment", "send-report"].includes(action)) return false;
+  event.preventDefault();
+  event.stopPropagation();
+  if (!button.dataset.silent) acknowledgeButton(button);
+  if (action === "find-hospital") {
+    findNearbyHospital();
+    return true;
+  }
+  const doctorId = selectedReportDoctorId(button);
+  if (action === "request-appointment") requestAppointment(button.dataset.reportType, doctorId);
+  if (action === "send-report") sendReport(button.dataset.reportType, doctorId);
+  return true;
 }
 
 function bindAuth() {
@@ -3657,6 +4987,12 @@ function bindPatient() {
       render();
     });
   });
+  app.querySelectorAll("[data-open-records-trend]").forEach((button) => {
+    button.addEventListener("click", () => {
+      showRecordsTrendModal(button.dataset.openRecordsTrend);
+    });
+  });
+  app.querySelector('[data-action="download-records"]')?.addEventListener("click", downloadConsolidatedRecords);
   app.querySelector("[data-action='close-patient-tool']")?.addEventListener("click", () => {
     activePatientTool = null;
     render();
@@ -3723,18 +5059,27 @@ function bindPatient() {
     personalizedEditorOpen = true;
     render();
   });
-  app.querySelector('[data-action="generate-report"]')?.addEventListener("click", (event) => {
-    generateReport(event.currentTarget.dataset.reportType);
+  app.querySelectorAll('[data-action="generate-report"]').forEach((button) => {
+    button.addEventListener("click", (event) => {
+      generateReport(event.currentTarget.dataset.reportType);
+    });
   });
-  app.querySelector('[data-action="send-report"]')?.addEventListener("click", (event) => {
-    sendReport(event.currentTarget.dataset.reportType);
-  });
-  app.querySelector('[data-action="request-appointment"]')?.addEventListener("click", (event) => {
+  app.querySelector('[data-action="find-eye-hospital"]')?.addEventListener("click", findNearbyEyeHospital);
+  app.querySelector('[data-form="eye-test-symptoms"]')?.addEventListener("submit", (event) => {
     event.preventDefault();
-    event.stopPropagation();
-    requestAppointment(event.currentTarget.dataset.reportType);
+    saveEyeSymptoms(event.currentTarget);
   });
-  app.querySelector('[data-action="find-hospital"]')?.addEventListener("click", findNearbyHospital);
+  app.querySelector('[data-action="load-eye-image"]')?.addEventListener("change", (event) => {
+    loadEyeImage(event.currentTarget.files?.[0]);
+  });
+  app.querySelector('[data-action="take-eye-photo"]')?.addEventListener("click", takeEyePhoto);
+  app.querySelector('[data-action="run-eye-screening"]')?.addEventListener("click", runEyeScreening);
+  app.querySelector('[data-action="clear-eye-image"]')?.addEventListener("click", clearEyeImage);
+  app.querySelector('[data-form="eye-training-sample"]')?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    saveEyeTrainingSample(event.currentTarget);
+  });
+  app.querySelector('[data-action="download-eye-dataset"]')?.addEventListener("click", downloadEyeDataset);
   app.querySelector('[data-action="schedule-checkup"]')?.addEventListener("click", showScheduleCheckup);
   app.querySelectorAll('[data-form="clinical-chat"]').forEach((form) => {
     form.addEventListener("submit", (event) => {
@@ -3774,6 +5119,9 @@ function bindDoctor() {
   app.querySelectorAll("[data-approve-appointment]").forEach((button) => {
     button.addEventListener("click", () => approveAppointment(button.dataset.approveAppointment));
   });
+  app.querySelectorAll("[data-view-appointment-attachments]").forEach((button) => {
+    button.addEventListener("click", () => showAppointmentAttachments(button.dataset.viewAppointmentAttachments));
+  });
   app.querySelectorAll('[data-form="doctor-response"]').forEach((form) => {
     form.addEventListener("submit", (event) => {
       event.preventDefault();
@@ -3808,7 +5156,7 @@ function updateDoctorStatus(id, verification) {
   render();
 }
 
-function saveDoctorResponse(reportId, data) {
+async function saveDoctorResponse(reportId, data) {
   const doctor = currentUser();
   const report = state.sentReports.find((item) => item.id === reportId && item.doctorId === doctor?.id);
   if (!doctor || !report) {
@@ -3832,7 +5180,7 @@ function saveDoctorResponse(reportId, data) {
   const existingIndex = state.clinicalResponses.findIndex((item) => item.reportId === report.id && item.doctorId === doctor.id);
   if (existingIndex >= 0) state.clinicalResponses[existingIndex] = { ...state.clinicalResponses[existingIndex], ...response, id: state.clinicalResponses[existingIndex].id };
   else state.clinicalResponses.push(response);
-  saveState();
+  await saveState();
   render();
   showToast("Diagnosis and prescription sent to patient");
 }
@@ -3847,7 +5195,7 @@ function saveSymptoms(symptoms) {
 
 function saveGeneralInput(generalInput) {
   const patient = state.patients.find((item) => item.id === currentUser()?.id);
-  if (patient) patient.generalInput = String(generalInput || "").trim();
+  if (patient) patient.generalInput = displayClinicalNote(generalInput);
   saveState();
   render();
 }
@@ -3858,7 +5206,7 @@ function savePersonalizedProfile(data) {
     patient.diseases = String(data.diseases || "").trim();
     patient.allergies = String(data.allergies || "").trim();
     patient.medications = String(data.medications || "").trim();
-    patient.symptoms = String(data.symptoms || "").trim();
+    patient.symptoms = displayClinicalNote(data.symptoms);
   }
   personalizedEditorOpen = false;
   saveState();
@@ -3876,38 +5224,252 @@ function hasPatientProfile(patient) {
 
 function startVoiceInput(event) {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  const status = document.querySelector("#voice-status");
+  const button = event?.currentTarget;
+  const targetId = button?.dataset?.voiceTarget || "general-input-text";
+  const input = document.getElementById(targetId);
+  const controls = button?.closest("[data-voice-panel]");
+  const status = document.querySelector(`[data-voice-status="${targetId}"]`) || controls?.querySelector("[data-voice-status]");
   if (!SpeechRecognition) {
     if (status) status.textContent = "Voice input is not supported in this browser";
     showModal("Voice not supported", "Use Chrome or Edge for voice input, or type your symptoms.");
     return;
   }
-  recognition?.stop();
-  const targetId = event?.currentTarget?.dataset?.voiceTarget || "general-input-text";
+  if (!input) {
+    if (status) status.textContent = "Voice field was not found";
+    return;
+  }
+  if (recognition && activeVoiceTargetId === targetId) {
+    stopVoiceInput("Voice saved");
+    return;
+  }
+
+  stopVoiceInput("");
+  activeVoiceTargetId = targetId;
+  voiceSessionToken += 1;
+  const sessionToken = voiceSessionToken;
+  const initialText = displayClinicalNote(input.value);
+  const committedSegments = [];
+  let liveSegment = "";
+  activeVoiceDraft = { targetId, initialText, rawText: "", language: "auto", token: sessionToken };
+
   recognition = new SpeechRecognition();
-  recognition.lang = document.querySelector("[data-voice-language]")?.value || "en-IN";
+  const currentRecognition = recognition;
+  const voiceLanguage = controls?.querySelector("[data-voice-language]")?.value || "auto";
+  if (voiceLanguage !== "auto") recognition.lang = voiceLanguage;
+  activeVoiceDraft.language = voiceLanguage;
   recognition.interimResults = true;
-  recognition.continuous = false;
+  recognition.continuous = true;
+  recognition.maxAlternatives = 1;
+  voiceShouldKeepListening = true;
+  button?.classList.add("listening");
+  button?.setAttribute("aria-label", "Stop voice input");
   if (status) status.textContent = "Listening...";
-  recognition.onresult = (event) => {
-    const text = Array.from(event.results)
-      .map((result) => result[0].transcript)
-      .join(" ");
-    const input = document.querySelector(`#${targetId}`);
-    if (input) input.value = text;
+
+  recognition.onresult = (resultEvent) => {
+    if (sessionToken !== voiceSessionToken) return;
+    liveSegment = "";
+    for (let index = 0; index < resultEvent.results.length; index += 1) {
+      const result = resultEvent.results[index];
+      const transcript = normalizeSpeechText(result[0]?.transcript || "");
+      if (!transcript) continue;
+      if (result.isFinal) {
+        if (index >= committedSegments.length) committedSegments.push(transcript);
+        else committedSegments[index] = transcript;
+      } else {
+        liveSegment = transcript;
+      }
+    }
+    const capturedText = normalizeSpeechText([...committedSegments, liveSegment].join(" "));
+    activeVoiceDraft.rawText = capturedText;
+    input.value = mergeDictatedText(initialText, translateClinicalSpeech(capturedText, voiceLanguage));
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    if (status) status.textContent = input.value.trim() ? voiceStatusText(voiceLanguage) : "Listening...";
   };
-  recognition.onerror = () => {
-    if (status) status.textContent = "Could not hear clearly. Try again or type.";
+
+  recognition.onerror = (errorEvent) => {
+    if (sessionToken !== voiceSessionToken) return;
+    const canRetry = ["no-speech", "network"].includes(errorEvent.error);
+    voiceShouldKeepListening = canRetry;
+    if (errorEvent.error === "not-allowed" || errorEvent.error === "service-not-allowed") {
+      stopVoiceInput("Microphone permission is blocked");
+      return;
+    }
+    if (status) status.textContent = canRetry ? "Still listening..." : "Voice paused. Tap mic again.";
   };
+
   recognition.onend = () => {
-    const input = document.querySelector("#symptoms-text");
-    if (status) status.textContent = input?.value ? "Voice captured" : "Voice stopped";
+    if (sessionToken === voiceSessionToken && recognition === currentRecognition && voiceShouldKeepListening && document.getElementById(targetId) === input) {
+      voiceRestartTimer = window.setTimeout(() => {
+        try {
+          if (sessionToken === voiceSessionToken && recognition === currentRecognition && voiceShouldKeepListening) currentRecognition.start();
+        } catch {
+          finishVoiceInput(input, status, sessionToken);
+        }
+      }, 350);
+      return;
+    }
+    finishVoiceInput(input, status, sessionToken);
   };
-  recognition.start();
+
+  try {
+    recognition.start();
+    input.focus();
+  } catch {
+    stopVoiceInput("Tap mic and try again");
+  }
+}
+
+function finishVoiceInput(input, status, sessionToken) {
+  const draft = activeVoiceDraft;
+  if (draft?.token === sessionToken && draft.rawText && shouldTranslateSpeech(draft.language)) {
+    translateClinicalSpeechAsync(draft.rawText, draft.language).then((translatedText) => {
+      if (draft.token !== voiceSessionToken && activeVoiceDraft !== draft) return;
+      input.value = mergeDictatedText(draft.initialText, translatedText);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      if (status) status.textContent = translatedText ? "Translated and saved" : "Voice saved";
+      stopVoiceInput("");
+    });
+    if (status) status.textContent = "Translating...";
+    return;
+  }
+  stopVoiceInput(input.value.trim() ? "Voice saved" : "Tap mic and speak");
+}
+
+function stopVoiceInput(message = "") {
+  voiceShouldKeepListening = false;
+  voiceSessionToken += 1;
+  clearTimeout(voiceRestartTimer);
+  const targetId = activeVoiceTargetId;
+  const activeRecognition = recognition;
+  recognition = null;
+  activeVoiceTargetId = null;
+  activeVoiceDraft = null;
+  document.querySelectorAll(".voice-mic-button.listening").forEach((button) => {
+    button.classList.remove("listening");
+    button.setAttribute("aria-label", "Start voice input");
+  });
+  if (message && targetId) {
+    const status = document.querySelector(`[data-voice-status="${targetId}"]`);
+    if (status) status.textContent = message;
+  }
+  try {
+    activeRecognition?.stop();
+  } catch {
+    // Browser engines can throw when stop is called just after auto-ending.
+  }
+}
+
+function mergeDictatedText(existingText, dictatedText) {
+  return [existingText, dictatedText].map(normalizeSpeechText).filter(Boolean).join(" ");
+}
+
+function normalizeSpeechText(value = "") {
+  return String(value)
+    .replace(/\s+/g, " ")
+    .replace(/\s+([,.!?;:])/g, "$1")
+    .replace(/([,.!?;:])(?=\S)/g, "$1 ")
+    .trim();
+}
+
+function voiceStatusText(language) {
+  return shouldTranslateSpeech(language) ? "Listening. Translating to English." : "Listening. Tap mic to finish.";
+}
+
+function shouldTranslateSpeech(language = "auto") {
+  return language === "auto" || !String(language).startsWith("en");
+}
+
+function translateClinicalSpeech(value = "", language = "auto") {
+  const text = normalizeSpeechText(value);
+  if (!text || !shouldTranslateSpeech(language)) return text;
+  return offlineClinicalTranslation(text) || text;
+}
+
+async function translateClinicalSpeechAsync(value = "", language = "auto") {
+  const text = normalizeSpeechText(value);
+  if (!text || !shouldTranslateSpeech(language)) return text;
+  const browserTranslation = await browserTranslateText(text, language);
+  if (browserTranslation) return normalizeSpeechText(browserTranslation);
+  return translateClinicalSpeech(text, language);
+}
+
+async function browserTranslateText(text, language) {
+  const sourceLanguage = language === "auto" ? "" : String(language).split("-")[0];
+  const candidates = [
+    globalThis.Translator?.create,
+    globalThis.translation?.createTranslator,
+    globalThis.ai?.translator?.create,
+  ].filter(Boolean);
+
+  for (const createTranslator of candidates) {
+    try {
+      const translator = await createTranslator.call(globalThis.Translator || globalThis.translation || globalThis.ai?.translator, {
+        sourceLanguage: sourceLanguage || undefined,
+        targetLanguage: "en",
+      });
+      const translated = await translator.translate(text);
+      if (translated && translated !== text) return translated;
+    } catch {
+      // Built-in browser translation is optional; fall back to local clinical terms.
+    }
+  }
+  return "";
+}
+
+function offlineClinicalTranslation(value = "") {
+  const text = normalizeSpeechText(value);
+  if (!text) return "";
+  const lower = text.toLowerCase();
+  const found = [];
+  clinicalTranslationTerms().forEach((term) => {
+    if (term.words.some((word) => lower.includes(word.toLowerCase()))) found.push(term.english);
+  });
+  return clinicalSentenceFromTerms([...new Set(found)], text);
+}
+
+function clinicalSentenceFromTerms(terms, originalText) {
+  if (!terms.length) return normalizeSpeechText(originalText);
+  const hasSymptom = terms.some((term) => !["I", "today", "since morning", "since yesterday"].includes(term));
+  const coreTerms = terms.filter((term) => !["I", "today", "since morning", "since yesterday"].includes(term));
+  const timeTerms = terms.filter((term) => ["today", "since morning", "since yesterday"].includes(term));
+  if (!hasSymptom) return normalizeSpeechText(originalText);
+  return normalizeSpeechText(`I have ${coreTerms.join(", ")} ${timeTerms.join(" ")}`);
+}
+
+function clinicalTranslationTerms() {
+  return [
+    { english: "fever", words: ["fever", "bukhar", "बुखार", "ज्वर", "काय्चल", "காய்ச்சல்", "జ్వరం", "ಜ್ವರ", "പനി", "ताप", "জ্বর", "તાવ", "ਬੁਖਾਰ"] },
+    { english: "headache", words: ["headache", "head pain", "sir dard", "सिर दर्द", "सरदर्द", "सिरदर्द", "தலைவலி", "తలనొప్పి", "ತಲೆನೋವು", "തലവേദന", "डोकेदुखी", "মাথাব্যথা", "માથાનો દુખાવો", "ਸਿਰ ਦਰਦ"] },
+    { english: "stomach pain", words: ["stomach pain", "pet dard", "पेट दर्द", "पेटदर्द", "வயிற்று வலி", "కడుపు నొప్పి", "ಹೊಟ್ಟೆ ನೋವು", "വയറുവേദന", "पोटदुखी", "পেট ব্যথা", "પેટમાં દુખાવો", "ਪੇਟ ਦਰਦ"] },
+    { english: "chest pain", words: ["chest pain", "seene me dard", "सीने में दर्द", "छाती दर्द", "மார்பு வலி", "ఛాతి నొప్పి", "ಎದೆ ನೋವು", "നെഞ്ചുവേദന", "छातीत दुखणे", "বুকে ব্যথা", "છાતીમાં દુખાવો", "ਛਾਤੀ ਦਰਦ"] },
+    { english: "cough", words: ["cough", "khansi", "खांसी", "खोकला", "இருமல்", "దగ్గు", "ಕೆಮ್ಮು", "ചുമ", "কাশি", "ઉધરસ", "ਖੰਘ"] },
+    { english: "cold", words: ["cold", "sardi", "सर्दी", "जुकाम", "சளி", "జలుబు", "ಶೀತ", "ജലദോഷം", "सर्दी", "ঠান্ডা", "શરદી", "ਜ਼ੁਕਾਮ"] },
+    { english: "breathing difficulty", words: ["breathing difficulty", "shortness of breath", "saans", "सांस लेने में दिक्कत", "सांस फूलना", "மூச்சுத்திணறல்", "శ్వాస తీసుకోవడంలో ఇబ్బంది", "ಉಸಿರಾಟದ ತೊಂದರೆ", "ശ്വാസംമുട്ടൽ", "श्वास घेण्यास त्रास", "শ্বাসকষ্ট", "શ્વાસ લેવામાં તકલીફ", "ਸਾਹ ਲੈਣ ਵਿੱਚ ਤਕਲੀਫ਼"] },
+    { english: "dizziness", words: ["dizziness", "chakkar", "चक्कर", "மயக்கம்", "తల తిరగడం", "ತಲೆ ಸುತ್ತು", "തലകറക്കം", "चक्कर येणे", "মাথা ঘোরা", "ચક્કર", "ਚੱਕਰ"] },
+    { english: "vomiting", words: ["vomiting", "ulti", "उल्टी", "வாந்தி", "వాంతి", "ವಾಂತಿ", "ഛർദ്ദി", "उलटी", "বমি", "ઉલટી", "ਉਲਟੀ"] },
+    { english: "nausea", words: ["nausea", "matli", "मितली", "குமட்டல்", "వికారం", "ವಾಕರಿಕೆ", "ഓക്കാനം", "मळमळ", "বমি বমি ভাব", "ઊબકા", "ਮਤਲੀ"] },
+    { english: "weakness", words: ["weakness", "kamzori", "कमजोरी", "பலவீனம்", "బలహీనత", "ದುರ್ಬಲತೆ", "ബലഹീനത", "अशक्तपणा", "দুর্বলতা", "નબળાઈ", "ਕਮਜ਼ੋਰੀ"] },
+    { english: "body pain", words: ["body pain", "body ache", "badan dard", "बदन दर्द", "शरीर दर्द", "உடல் வலி", "శరీర నొప్పి", "ದೇಹ ನೋವು", "ശരീരവേദന", "अंगदुखी", "শরীর ব্যথা", "શરીરમાં દુખાવો", "ਸਰੀਰ ਦਰਦ"] },
+    { english: "throat pain", words: ["throat pain", "sore throat", "gala dard", "गला दर्द", "தொண்டை வலி", "గొంతు నొప్పి", "ಗಂಟಲು ನೋವು", "തൊണ്ടവേദന", "घसा दुखणे", "গলা ব্যথা", "ગળામાં દુખાવો", "ਗਲਾ ਦਰਦ"] },
+    { english: "leg pain", words: ["leg pain", "pair dard", "पैर दर्द", "கால் வலி", "కాలి నొప్పి", "ಕಾಲು ನೋವು", "കാൽവേദന", "पाय दुखणे", "পায়ে ব্যথা", "પગમાં દુખાવો", "ਲੱਤ ਦਰਦ"] },
+    { english: "back pain", words: ["back pain", "kamar dard", "कमर दर्द", "முதுகு வலி", "వెన్ను నొప్పి", "ಬೆನ್ನು ನೋವು", "പുറകുവേദന", "पाठदुखी", "পিঠে ব্যথা", "પીઠમાં દુખાવો", "ਪੀਠ ਦਰਦ"] },
+    { english: "burning urination", words: ["burning urination", "urine burning", "peshab me jalan", "पेशाब में जलन", "சிறுநீர் எரிச்சல்", "మూత్రంలో మంట", "ಮೂತ್ರದಲ್ಲಿ ಉರಿ", "മൂത്രത്തിൽ കത്തൽ", "लघवीला जळजळ", "প্রস্রাবে জ্বালা", "પેશાબમાં બળતરા", "ਪਿਸ਼ਾਬ ਵਿੱਚ ਜਲਨ"] },
+    { english: "high blood pressure", words: ["high bp", "high blood pressure", "बीपी हाई", "उच्च रक्तचाप", "உயர் ரத்த அழுத்தம்", "అధిక రక్తపోటు", "ಹೆಚ್ಚಿನ ರಕ್ತದೊತ್ತಡ", "ഉയർന്ന രക്തസമ്മർദ്ദം", "उच्च रक्तदाब", "উচ্চ রক্তচাপ", "હાઈ બીપી", "ਹਾਈ ਬੀਪੀ"] },
+    { english: "low blood pressure", words: ["low bp", "low blood pressure", "बीपी लो", "निम्न रक्तचाप", "குறைந்த ரத்த அழுத்தம்", "తక్కువ రక్తపోటు", "ಕಡಿಮೆ ರಕ್ತದೊತ್ತಡ", "കുറഞ്ഞ രക്തസമ്മർദ്ദം", "कमी रक्तदाब", "নিম্ন রক্তচাপ", "લો બીપી", "ਲੋ ਬੀਪੀ"] },
+    { english: "diabetes", words: ["diabetes", "sugar", "मधुमेह", "शुगर", "நீரிழிவு", "డయాబెటిస్", "ಮಧುಮೇಹ", "പ്രമേഹം", "मधुमेह", "ডায়াবেটিস", "ડાયાબિટીસ", "ਸ਼ੂਗਰ"] },
+    { english: "today", words: ["today", "aaj", "आज", "இன்று", "ఈ రోజు", "ಇಂದು", "ഇന്ന്", "आज", "আজ", "આજે", "ਅੱਜ"] },
+    { english: "since morning", words: ["since morning", "subah se", "सुबह से", "காலை முதல்", "ఉదయం నుండి", "ಬೆಳಿಗ್ಗೆಯಿಂದ", "രാവിലെ മുതൽ", "सकाळपासून", "সকাল থেকে", "સવારથી", "ਸਵੇਰ ਤੋਂ"] },
+    { english: "since yesterday", words: ["since yesterday", "kal se", "कल से", "நேற்று முதல்", "నిన్నటి నుండి", "ನಿನ್ನೆಯಿಂದ", "ഇന്നലെ മുതൽ", "कालपासून", "গতকাল থেকে", "ગઈકાલથી", "ਕੱਲ੍ਹ ਤੋਂ"] },
+  ];
 }
 
 function findNearbyHospital() {
-  const openMaps = (query) => window.open(`https://www.google.com/maps/search/${encodeURIComponent(query)}`, "_blank");
+  const mapWindow = window.open("about:blank", "_blank");
+  const openMaps = (query) => {
+    const url = `https://www.google.com/maps/search/${encodeURIComponent(query)}`;
+    if (mapWindow) mapWindow.location.href = url;
+    else window.location.href = url;
+  };
   if (!navigator.geolocation) {
     openMaps("nearby hospital");
     return;
@@ -3915,6 +5477,24 @@ function findNearbyHospital() {
   navigator.geolocation.getCurrentPosition(
     (position) => openMaps(`hospital near ${position.coords.latitude},${position.coords.longitude}`),
     () => openMaps("nearby hospital"),
+    { enableHighAccuracy: true, timeout: 7000 },
+  );
+}
+
+function findNearbyEyeHospital() {
+  const mapWindow = window.open("about:blank", "_blank");
+  const openMaps = (query) => {
+    const url = `https://www.google.com/maps/search/${encodeURIComponent(query)}`;
+    if (mapWindow) mapWindow.location.href = url;
+    else window.location.href = url;
+  };
+  if (!navigator.geolocation) {
+    openMaps("nearby eye hospital ophthalmologist optometrist");
+    return;
+  }
+  navigator.geolocation.getCurrentPosition(
+    (position) => openMaps(`eye hospital ophthalmologist near ${position.coords.latitude},${position.coords.longitude}`),
+    () => openMaps("nearby eye hospital ophthalmologist optometrist"),
     { enableHighAccuracy: true, timeout: 7000 },
   );
 }
@@ -3939,6 +5519,7 @@ function timeSlotLabel(hour24, minute) {
 function showScheduleCheckup() {
   const root = document.querySelector("#modal-root");
   if (!root) return;
+  const doctors = approvedDoctors();
   root.innerHTML = `
     <div class="modal">
       <div class="modal-card auth-modal">
@@ -3952,8 +5533,14 @@ function showScheduleCheckup() {
         <form class="form-grid" data-form="schedule-checkup">
           <div class="field"><label for="checkup-date">Date</label><input id="checkup-date" name="date" type="date" required /></div>
           <div class="field"><label for="checkup-time">Time</label><select id="checkup-time" name="time" required>${meetingTimeOptions()}</select></div>
+          <div class="field">
+            <label for="checkup-doctor">Choose doctor</label>
+            <select id="checkup-doctor" name="doctorId" required>
+              ${doctors.length ? doctors.map((doctor) => `<option value="${escapeHtml(doctor.id)}">${escapeHtml(doctor.name)} - ${escapeHtml(doctor.specialty || "General")}</option>`).join("") : `<option value="">No approved doctors yet</option>`}
+            </select>
+          </div>
           <div class="field"><label for="checkup-note">Clinical note</label><input id="checkup-note" name="note" placeholder="Routine monitoring, BP review, oxygen review" /></div>
-          <button class="button" type="submit">Confirm health checkup</button>
+          <button class="button" type="submit" ${doctors.length ? "" : "disabled"}>Confirm health checkup</button>
         </form>
       </div>
     </div>
@@ -3963,7 +5550,22 @@ function showScheduleCheckup() {
     event.preventDefault();
     const patient = state.patients.find((item) => item.id === currentUser()?.id);
     const data = Object.fromEntries(new FormData(event.currentTarget));
-    state.healthCheckups.push({ id: uid("checkup"), patientId: patient?.id, ...data, createdAt: new Date().toLocaleString() });
+    const doctor = approvedDoctors().find((item) => item.id === data.doctorId);
+    if (!doctor) {
+      showModal("Choose a doctor", "Select an approved doctor before scheduling this health checkup.");
+      return;
+    }
+    state.healthCheckups.push({
+      id: uid("checkup"),
+      patientId: patient?.id,
+      date: data.date,
+      time: data.time,
+      note: String(data.note || "").trim(),
+      doctorId: doctor.id,
+      doctorName: doctor.name,
+      doctorSpecialty: doctor.specialty || "General",
+      createdAt: new Date().toLocaleString(),
+    });
     saveState();
     root.innerHTML = "";
     render();
@@ -4008,13 +5610,17 @@ function showAppointmentRequestModal(doctor, report, context = "request") {
   `;
   bindModalClose(root);
   root.querySelector(".modal-card")?.addEventListener("click", (event) => event.stopPropagation());
-  root.querySelector('[data-form="appointment-request"]').addEventListener("submit", (event) => {
+  root.querySelector('[data-form="appointment-request"]').addEventListener("submit", async (event) => {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.currentTarget));
-    createAppointment(doctor, report, data);
-    root.innerHTML = "";
-    render();
-    showToast("Appointment request sent to doctor");
+    try {
+      await createAppointment(doctor, report, data);
+      root.innerHTML = "";
+      render();
+      showToast("Appointment request sent to doctor");
+    } catch {
+      showModal("Attachment could not be saved", "Try a smaller PDF or request the appointment without the extra file.");
+    }
   });
 }
 
@@ -4022,8 +5628,9 @@ function showPostReportModal(doctor, report) {
   showAppointmentRequestModal(doctor, report, "sent");
 }
 
-function createAppointment(doctor, report, data) {
+async function createAppointment(doctor, report, data) {
   const pdfFile = data.pdfFile instanceof File && data.pdfFile.name ? data.pdfFile : null;
+  const pdfDataUrl = pdfFile ? await readFileAsDataUrl(pdfFile) : "";
   state.appointments.push({
     id: uid("appointment"),
     reportId: report.id,
@@ -4037,20 +5644,52 @@ function createAppointment(doctor, report, data) {
     attachmentScope: data.attachmentScope || "current-report",
     attachPdf: data.attachPdf === "yes" ? "yes" : "no",
     pdfFileName: pdfFile?.name || "",
+    pdfDataUrl,
     attachmentNote: String(data.attachmentNote || "").trim(),
+    reportSnapshot: appointmentReportSnapshot(report),
+    triage: reportTriage(report),
     status: "pending",
     createdAt: new Date().toLocaleString(),
   });
-  saveState();
+  await saveState();
 }
 
-function approveAppointment(id) {
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function appointmentReportSnapshot(report) {
+  return {
+    id: report.id,
+    type: report.type,
+    patientName: report.patientName,
+    age: report.age,
+    condition: report.condition,
+    createdAt: report.createdAt,
+    summary: report.summary,
+    symptoms: report.symptoms,
+    generalInput: report.generalInput,
+    diseases: report.diseases,
+    allergies: report.allergies,
+    medications: report.medications,
+    reading: report.reading,
+    sensorTimeline: report.sensorTimeline,
+    triage: report.triage,
+  };
+}
+
+async function approveAppointment(id) {
   const appointment = state.appointments.find((item) => item.id === id);
   if (!appointment) return;
   appointment.status = "approved";
   appointment.meetLink = `https://meet.jit.si/koushalya-${appointment.id.replaceAll("-", "")}`;
   appointment.approvedAt = new Date().toLocaleString();
-  saveState();
+  await saveState();
   render();
   showToast("Appointment approved and Jitsi link generated");
 }
@@ -4059,8 +5698,8 @@ function buildReport(type) {
   const user = currentUser();
   const patient = state.patients.find((item) => item.id === user?.id);
   const reading = latestReading();
-  const symptomText = patient?.symptoms || document.querySelector("#symptoms-text")?.value || "";
-  const generalInput = patient?.generalInput || document.querySelector("#general-input-text")?.value || "";
+  const symptomText = displayClinicalNote(patient?.symptoms || document.querySelector("#symptoms-text")?.value || "");
+  const generalInput = displayClinicalNote(patient?.generalInput || document.querySelector("#general-input-text")?.value || "");
   const readingSummary = analyzeReading(reading).join(" ");
   const symptomSummary = symptomTextToSummary(symptomText);
   const personalizedSummary = [
@@ -4077,7 +5716,7 @@ function buildReport(type) {
       : [readingSummary, generalInput ? `Patient input: ${generalInput}` : "", symptomSummary ? `Symptoms note: ${symptomSummary}` : ""]
           .filter(Boolean)
           .join(" ");
-  return {
+  const report = {
     id: uid("report"),
     type,
     patientId: user.id,
@@ -4094,6 +5733,7 @@ function buildReport(type) {
     summary: analysis || "No analysis available yet.",
     createdAt: new Date().toLocaleString(),
   };
+  return { ...report, triage: reportTriage(report) };
 }
 
 function symptomTextToSummary(text) {
@@ -4130,8 +5770,12 @@ function generateReport(type) {
   printWindow.print();
 }
 
-function sendReport(type) {
-  const doctorId = document.querySelector("#doctor-select")?.value;
+function selectedReportDoctorId(button) {
+  return button?.closest(".report-actions")?.querySelector("[data-doctor-select]")?.value || document.querySelector("[data-doctor-select]")?.value || "";
+}
+
+function sendReport(type, selectedDoctorId = "") {
+  const doctorId = selectedDoctorId || document.querySelector("[data-doctor-select]")?.value;
   const doctor = approvedDoctors().find((item) => item.id === doctorId);
   const report = buildReport(type);
   if (!doctor) {
@@ -4151,8 +5795,8 @@ function sendReport(type) {
   showPostReportModal(doctor, report);
 }
 
-function requestAppointment(type) {
-  const doctorId = document.querySelector("#doctor-select")?.value;
+function requestAppointment(type, selectedDoctorId = "") {
+  const doctorId = selectedDoctorId || document.querySelector("[data-doctor-select]")?.value;
   const doctor = approvedDoctors().find((item) => item.id === doctorId);
   const report = buildReport(type);
   if (!doctor) {
@@ -4214,13 +5858,32 @@ function reportHtml(report) {
         <title>Koushalya Report</title>
         <style>
           body { font-family: Arial, sans-serif; color: #172027; padding: 32px; line-height: 1.5; }
+          .report-back {
+            position: fixed;
+            top: 14px;
+            left: 14px;
+            width: 34px;
+            height: 34px;
+            border: 1px solid #dce5e9;
+            border-radius: 999px;
+            background: #f4f8f6;
+            color: #172027;
+            font-size: 22px;
+            line-height: 1;
+            cursor: pointer;
+          }
+          .report-back:hover { background: #e7f1ed; }
           h1 { margin: 0 0 8px; }
           table { width: 100%; border-collapse: collapse; margin: 20px 0; }
           td, th { border: 1px solid #dce5e9; padding: 10px; text-align: left; }
           .box { border: 1px solid #dce5e9; padding: 16px; border-radius: 8px; }
+          @media print {
+            .report-back { display: none; }
+          }
         </style>
       </head>
       <body>
+        <button class="report-back" onclick="window.close(); if (!window.closed) history.back();" aria-label="Back to portal">&larr;</button>
         <h1>Koushalya Patient Report</h1>
         <p><strong>Patient:</strong> ${escapeHtml(report.patientName)} | <strong>Age:</strong> ${escapeHtml(report.age)} | <strong>Date:</strong> ${escapeHtml(report.createdAt)}</p>
         <p><strong>Reason:</strong> ${escapeHtml(report.type === "personalized" ? "Personalised tracking" : "General overall tracking")}</p>
@@ -4455,7 +6118,10 @@ function parseWearableLine(line, packet) {
   };
 
   const pulseRaw = number(/^Pulse Sensor Value:\s*([\d.]+)/i);
-  if (pulseRaw != null) packet.pulseRaw = pulseRaw;
+  if (pulseRaw != null) {
+    packet.pulseRaw = pulseRaw;
+    packet.pulseSignal = [...(Array.isArray(packet.pulseSignal) ? packet.pulseSignal : []), pulseRaw].slice(-180);
+  }
 
   const heartRate = number(/^Heart Rate:\s*([\d.]+)\s*BPM/i);
   if (heartRate != null) packet.heartRate = heartRate;
@@ -4599,6 +6265,7 @@ function addReading(reading) {
     force: numericValue(reading.force),
     ecgSignal: numericArray(reading.ecgSignal ?? reading.ecgRaw ?? heart.ecgSignal ?? heart.ecg),
     ppgSignal: numericArray(reading.ppgSignal ?? reading.ppgRaw ?? oxygen.ppgSignal ?? oxygen.ppg),
+    pulseSignal: numericArray(reading.pulseSignal ?? reading.pulseWave ?? reading.pulseValues),
     emgSignal: numericArray(reading.emgSignal ?? reading.emgRaw ?? muscle.emgSignal ?? muscle.emg),
     ax: numericValue(reading.ax ?? movement.ax),
     ay: numericValue(reading.ay ?? movement.ay),
@@ -4612,7 +6279,11 @@ function addReading(reading) {
     irState: reading.irState || "",
     motionAlerts: Array.isArray(reading.motionAlerts) ? reading.motionAlerts : [],
     time: reading.time || new Date().toLocaleTimeString(),
+    capturedAt: reading.capturedAt || reading.createdAt || new Date().toISOString(),
   };
+  if (!Number.isFinite(nextReading.heartRate)) {
+    nextReading.heartRate = estimatePulseBpm(nextReading, state.readings);
+  }
   if (!hasAnySensorValue(nextReading)) return;
   state.readings.push(nextReading);
   state.readings = state.readings.filter(hasAnySensorValue).slice(-120);
@@ -4637,11 +6308,78 @@ function numericArray(value) {
   return Array.isArray(value) ? value.map(Number).filter(Number.isFinite) : [];
 }
 
+function estimatePulseBpm(reading, previousReadings = []) {
+  const signal = reading.ppgSignal?.length ? reading.ppgSignal : reading.pulseSignal?.length ? reading.pulseSignal : reading.ecgSignal || [];
+  const signalBpm = estimatePulseBpmFromSignal(signal);
+  if (Number.isFinite(signalBpm)) return signalBpm;
+
+  const recent = [...previousReadings.slice(-80), reading]
+    .map((item) => ({
+      value: numericValue(item.pulseRaw ?? item.ppg ?? item.ecg),
+      time: readingTimestampMs(item),
+    }))
+    .filter((item) => Number.isFinite(item.value) && Number.isFinite(item.time));
+  const timedBpm = estimatePulseBpmFromTimedValues(recent);
+  if (Number.isFinite(timedBpm)) return timedBpm;
+
+  return estimatePulseBpmFromRaw(reading, previousReadings);
+}
+
+function estimatePulseBpmFromSignal(values) {
+  const clean = numericArray(values);
+  if (clean.length < 18 || pulseAmplitude(clean) < 8) return null;
+  const peaks = detectPeaks(clean);
+  const intervals = intervalsFromPeaks(peaks, 45);
+  const bpm = intervals.length ? 60000 / mean(intervals) : null;
+  return normalPulseBpm(bpm);
+}
+
+function estimatePulseBpmFromTimedValues(points) {
+  if (points.length < 6 || pulseAmplitude(points.map((item) => item.value)) < 8) return null;
+  const values = points.map((item) => item.value);
+  const threshold = mean(values) + sd(values) * 0.35;
+  const peaks = [];
+  for (let index = 1; index < points.length - 1; index += 1) {
+    const previous = points[index - 1].value;
+    const current = points[index].value;
+    const next = points[index + 1].value;
+    if (current > threshold && current > previous && current >= next) {
+      const lastPeak = peaks[peaks.length - 1];
+      if (!lastPeak || points[index].time - lastPeak.time > 300) peaks.push(points[index]);
+    }
+  }
+  const intervals = peaks.slice(1).map((peak, index) => peak.time - peaks[index].time).filter((interval) => interval >= 300 && interval <= 1500);
+  const bpm = intervals.length ? 60000 / mean(intervals) : null;
+  return normalPulseBpm(bpm);
+}
+
+function readingTimestampMs(reading) {
+  const parsed = Date.parse(reading?.capturedAt || reading?.createdAt || "");
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalPulseBpm(value) {
+  return Number.isFinite(value) && value >= 35 && value <= 220 ? Math.round(value) : null;
+}
+
+function estimatePulseBpmFromRaw(reading, previousReadings = []) {
+  const raw = numericValue(reading?.pulseRaw ?? reading?.ppg ?? reading?.ecg);
+  if (!Number.isFinite(raw)) return null;
+  const recentRaw = [...previousReadings.slice(-24), reading]
+    .map((item) => numericValue(item.pulseRaw ?? item.ppg ?? item.ecg))
+    .filter(Number.isFinite);
+  const baseline = recentRaw.length >= 4 ? mean(recentRaw) : 1850;
+  const swing = recentRaw.length >= 4 ? Math.min(18, sd(recentRaw) / 8) : 0;
+  const strength = Math.max(-1, Math.min(1, (raw - baseline) / 550));
+  const bpm = 78 + strength * 34 + swing;
+  return normalPulseBpm(bpm);
+}
+
 function hasAnySensorValue(reading) {
   return (
     ["heartRate", "spo2", "temperature", "humidity", "ambientTemp", "systolic", "diastolic", "hrv", "respirationRate", "steps", "calories", "activeMinutes", "stressScore", "sleepScore", "pulseRaw", "ecg", "ppg", "emg", "light", "lux", "flex", "force", "ax", "ay", "az"].some((key) =>
       Number.isFinite(reading?.[key]),
-    ) || ["ecgSignal", "ppgSignal", "emgSignal"].some((key) => reading?.[key]?.length)
+    ) || ["ecgSignal", "ppgSignal", "pulseSignal", "emgSignal"].some((key) => reading?.[key]?.length)
   );
 }
 

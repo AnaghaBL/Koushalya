@@ -1373,8 +1373,9 @@ button {
 .eye-camera-preview video {
   display: none;
   width: 100%;
+  height: auto;
   max-height: 320px;
-  object-fit: cover;
+  object-fit: contain;
 }
 
 .eye-camera-preview.active video {

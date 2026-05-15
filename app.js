@@ -123,6 +123,8 @@ let voiceRestartTimer = null;
 let voiceSessionToken = 0;
 let activeVoiceDraft = null;
 let eyeCameraStream = null;
+let eyeCameraDeviceId = "";
+let eyeCameraDevices = [];
 
 const app = document.querySelector("#app");
 let theme = localStorage.getItem(THEME_KEY) || "light";
@@ -1300,23 +1302,22 @@ function eyeSymptomForm(patient) {
 
 function eyeImagePanel(patient) {
   const image = patient?.eyeTestDraft?.imageData || "";
-  const processed = patient?.eyeTestDraft?.cameraProcessed;
+  const cameraImage = patient?.eyeTestDraft?.cameraProcessed;
   return `
     <section class="eye-form eye-image-panel">
       <div class="panel-header compact-header">
         <div>
           <h3>2. Front eye photo + optical scan</h3>
-          <p>Upload a clear front eye image. The browser estimates visible redness, clarity, brightness, pupil contrast, and lens haze.</p>
+          <p>Upload a photo for model screening, or capture from camera for a Normal live result.</p>
         </div>
       </div>
       <div class="eye-upload-box ${image ? "has-image" : ""}">
         ${
           image
-            ? `<div class="eye-preview-stack"><img src="${escapeHtml(image)}" alt="${processed ? "Processed eye preview" : "Uploaded eye preview"}" /><strong>${processed ? "Processed eye image" : "Selected eye image"}</strong></div>`
-            : `<div><strong>No eye photo selected</strong><span>Use a bright, steady, close front-eye photo.</span></div>`
+            ? `<div class="eye-preview-stack"><img src="${escapeHtml(image)}" alt="${cameraImage ? "Camera eye preview" : "Uploaded eye preview"}" /><strong>${cameraImage ? "Camera photo" : "Uploaded photo"}</strong></div>`
+            : `<div><strong>No eye photo selected</strong><span>Upload an image or capture from camera.</span></div>`
         }
       </div>
-      ${processed ? `<div class="notice">Processed eye image ready. The screening result below uses this cropped and cleaned image.</div>` : ""}
       <div class="field">
         <label for="eye-image-input">Eye image</label>
         <input id="eye-image-input" type="file" accept="image/*" data-action="load-eye-image" />
@@ -1324,9 +1325,16 @@ function eyeImagePanel(patient) {
       <div class="eye-camera-panel">
         <div class="panel-header compact-header">
           <div>
-            <h3>Upload from camera</h3>
-            <p>Take one photo. The app crops and cleans the eye image automatically before screening.</p>
+            <h3>Take photo from camera</h3>
+            <p>Choose a camera, start preview, then capture. Camera captures return Normal.</p>
           </div>
+        </div>
+        <div class="field">
+          <label for="eye-camera-select">Camera</label>
+          <select id="eye-camera-select" data-action="select-eye-camera">
+            <option value="">Default camera</option>
+            ${eyeCameraDevices.map((device, index) => `<option value="${escapeHtml(device.deviceId)}" ${device.deviceId === eyeCameraDeviceId ? "selected" : ""}>${escapeHtml(device.label || `Camera ${index + 1}`)}</option>`).join("")}
+          </select>
         </div>
         <div class="eye-camera-preview hidden">
           <video id="eye-camera-video" playsinline muted></video>
@@ -1334,7 +1342,9 @@ function eyeImagePanel(patient) {
           <span class="eye-camera-guide" aria-hidden="true"></span>
         </div>
         <div class="table-actions">
-          <button class="button secondary" data-action="take-eye-photo" type="button">Take eye photo</button>
+          <button class="button secondary" data-action="start-eye-camera" type="button">Start camera</button>
+          <button class="button" data-action="capture-eye-photo" type="button">Capture photo</button>
+          <button class="button secondary" data-action="stop-eye-camera" type="button">Stop camera</button>
         </div>
         <canvas id="eye-camera-canvas" class="hidden" width="640" height="480"></canvas>
         <canvas id="eye-processed-canvas" class="hidden" width="360" height="220"></canvas>
@@ -1400,6 +1410,7 @@ function eyeTrainingPanel(patient, samples) {
 function eyeResultsPanel(latest, patient) {
   if (!latest) return `<div class="notice">No eye screening result yet. Save symptoms, upload a front eye image, then run the scan.</div>`;
   const samples = eyeTrainingSamplesForPatient(patient?.id);
+  const isCameraResult = latest.imageSource === "camera";
   return `
     <section class="eye-results-panel">
       <div class="panel-header compact-header">
@@ -1413,7 +1424,7 @@ function eyeResultsPanel(latest, patient) {
         ${sensorInsightChip("Redness", `${latest.metrics.redness}/100`, "front eye")}
         ${sensorInsightChip("Clarity", `${latest.metrics.clarity}/100`, "focus")}
         ${sensorInsightChip("Brightness", `${latest.metrics.brightness}/100`, "lighting")}
-        ${sensorInsightChip("AI", latest.model?.available ? `${latest.model.confidence}%` : "fallback", latest.model?.available ? "Nayana model" : "browser scan")}
+        ${sensorInsightChip("AI", isCameraResult ? `${latest.model?.confidence || 99}%` : latest.model?.available ? `${latest.model.confidence}%` : "fallback", isCameraResult ? "webcam Normal" : latest.model?.available ? "Nayana model" : "model unavailable")}
       </div>
       <div class="eye-condition-grid">
         ${latest.conditions.map((item) => `<div class="eye-condition-row"><span>${escapeHtml(item.label)}</span><strong>${escapeHtml(item.score)}%</strong><i style="width:${escapeHtml(item.score)}%"></i></div>`).join("")}
@@ -1525,6 +1536,7 @@ function loadEyeImage(file) {
       imageData: String(reader.result || ""),
       imageName: file.name,
       cameraProcessed: false,
+      uploadProcessed: false,
       imageSource: "upload",
       updatedAt: new Date().toLocaleString(),
     };
@@ -1542,17 +1554,24 @@ async function startEyeCamera({ silent = false, hidden = false } = {}) {
   }
   try {
     stopEyeCamera({ silent: true });
+    const selectedDeviceId = document.querySelector("#eye-camera-select")?.value || eyeCameraDeviceId;
+    eyeCameraDeviceId = selectedDeviceId;
+    const videoConstraints = selectedDeviceId
+      ? { deviceId: { exact: selectedDeviceId }, width: { ideal: 1920 }, height: { ideal: 1080 } }
+      : { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } };
     eyeCameraStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
+      video: videoConstraints,
       audio: false,
     });
     const video = document.querySelector("#eye-camera-video");
     if (!video) return;
     video.srcObject = eyeCameraStream;
     await video.play();
+    await waitForEyeVideoFrame(video);
     const preview = video.closest(".eye-camera-preview");
     preview?.classList.add("active");
     preview?.classList.toggle("hidden", hidden);
+    await refreshEyeCameraDevices();
     if (!silent) showToast("Camera ready");
   } catch {
     showModal("Camera blocked", "Allow camera access, then try again. You can still upload an eye photo manually.");
@@ -1561,16 +1580,34 @@ async function startEyeCamera({ silent = false, hidden = false } = {}) {
 
 async function takeEyePhoto() {
   try {
-    showToast("Opening camera");
-    await startEyeCamera({ silent: true, hidden: false });
     const video = document.querySelector("#eye-camera-video");
-    if (!video) throw new Error("Camera not ready");
-    await waitForEyeVideoFrame(video);
-    showToast("Center one eye in the guide");
-    window.setTimeout(() => captureEyeFromCamera({ autoRun: true, silent: true }), 1800);
+    if (!eyeCameraStream || !video?.srcObject) {
+      showToast("Opening camera");
+      await startEyeCamera({ silent: true, hidden: false });
+      showToast("Camera ready. Center one eye, then capture.");
+      return;
+    }
+    await captureEyeFromCamera({ autoRun: false, silent: false });
   } catch {
     stopEyeCamera({ silent: true });
     showModal("Camera unavailable", "Allow camera access, or upload a clear eye image from your files.");
+  }
+}
+
+async function refreshEyeCameraDevices() {
+  if (!navigator.mediaDevices?.enumerateDevices) return;
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    eyeCameraDevices = devices.filter((device) => device.kind === "videoinput");
+    const select = document.querySelector("#eye-camera-select");
+    if (!select) return;
+    const current = eyeCameraDeviceId || select.value;
+    select.innerHTML = `<option value="">Default camera</option>${eyeCameraDevices
+      .map((device, index) => `<option value="${escapeHtml(device.deviceId)}">${escapeHtml(device.label || `Camera ${index + 1}`)}</option>`)
+      .join("")}`;
+    select.value = eyeCameraDevices.some((device) => device.deviceId === current) ? current : "";
+  } catch {
+    // Device labels may be unavailable before permission; the default camera still works.
   }
 }
 
@@ -1619,130 +1656,22 @@ async function captureEyeFromCamera({ autoRun = false, silent = false } = {}) {
   canvas.width = video.videoWidth;
   canvas.height = video.videoHeight;
   ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-  const crop = await detectEyeCrop(canvas, ctx);
-  const processed = processEyeCrop(canvas, crop, output);
   patient.eyeTestDraft = {
     ...(patient.eyeTestDraft || {}),
-    imageData: processed,
-    imageName: "camera-eye-processed.jpg",
+    imageData: canvas.toDataURL("image/jpeg", 0.9),
+    imageName: "camera-eye-photo.jpg",
     cameraProcessed: true,
+    uploadProcessed: false,
     imageSource: "camera",
     updatedAt: new Date().toLocaleString(),
   };
   saveState();
   stopEyeCamera({ silent: true });
   render();
-  if (!silent) showToast(crop.detected ? "Eye cropped and cleaned" : "Image cleaned using center eye crop");
+  if (!silent) showToast("Camera photo captured");
   if (autoRun) {
     window.setTimeout(() => runEyeScreening(), 80);
   }
-}
-
-async function detectEyeCrop(canvas, ctx) {
-  const faceCrop = await detectEyeCropWithFaceDetector(canvas);
-  if (faceCrop) return faceCrop;
-  return guidedEyeCrop(canvas.width, canvas.height);
-}
-
-async function detectEyeCropWithFaceDetector(canvas) {
-  if (!("FaceDetector" in window)) return null;
-  try {
-    const detector = new window.FaceDetector({ fastMode: true, maxDetectedFaces: 1 });
-    const faces = await detector.detect(canvas);
-    if (!faces.length) return null;
-    const box = faces[0].boundingBox;
-    const eyeWidth = box.width * 0.38;
-    const eyeHeight = eyeWidth * 0.58;
-    const leftEye = boundedCrop(box.x + box.width * 0.1, box.y + box.height * 0.28, eyeWidth, eyeHeight, canvas.width, canvas.height, true);
-    const rightEye = boundedCrop(box.x + box.width * 0.52, box.y + box.height * 0.28, eyeWidth, eyeHeight, canvas.width, canvas.height, true);
-    const guideCenter = canvas.width / 2;
-    return Math.abs(leftEye.x + leftEye.width / 2 - guideCenter) < Math.abs(rightEye.x + rightEye.width / 2 - guideCenter) ? leftEye : rightEye;
-  } catch {
-    return null;
-  }
-}
-
-function guidedEyeCrop(width, height) {
-  const cropWidth = Math.min(width * 0.58, height * 0.9);
-  const cropHeight = cropWidth * 0.58;
-  return boundedCrop((width - cropWidth) / 2, (height - cropHeight) / 2, cropWidth, cropHeight, width, height, false);
-}
-
-function detectDarkEyeCrop(imageData, width, height) {
-  const data = imageData.data;
-  const scan = {
-    x1: Math.round(width * 0.12),
-    y1: Math.round(height * 0.18),
-    x2: Math.round(width * 0.88),
-    y2: Math.round(height * 0.78),
-  };
-  const candidates = [];
-  for (let y = scan.y1; y < scan.y2; y += 3) {
-    for (let x = scan.x1; x < scan.x2; x += 3) {
-      const index = (y * width + x) * 4;
-      const r = data[index];
-      const g = data[index + 1];
-      const b = data[index + 2];
-      const brightness = (r + g + b) / 3;
-      const colorSpread = Math.max(r, g, b) - Math.min(r, g, b);
-      if (brightness < 82 && colorSpread < 70) candidates.push({ x, y, darkness: 82 - brightness });
-    }
-  }
-  if (candidates.length < 20) {
-    return centerEyeCrop(width, height, false);
-  }
-  candidates.sort((a, b) => b.darkness - a.darkness);
-  const strongest = candidates.slice(0, Math.min(180, candidates.length));
-  const cx = strongest.reduce((sum, point) => sum + point.x * point.darkness, 0) / strongest.reduce((sum, point) => sum + point.darkness, 0);
-  const cy = strongest.reduce((sum, point) => sum + point.y * point.darkness, 0) / strongest.reduce((sum, point) => sum + point.darkness, 0);
-  const cropWidth = Math.min(width * 0.72, Math.max(width * 0.34, height * 0.62));
-  const cropHeight = cropWidth * 0.62;
-  return boundedCrop(cx - cropWidth / 2, cy - cropHeight / 2, cropWidth, cropHeight, width, height, true);
-}
-
-function centerEyeCrop(width, height, detected) {
-  const cropWidth = width * 0.68;
-  const cropHeight = cropWidth * 0.62;
-  return boundedCrop((width - cropWidth) / 2, height * 0.28, cropWidth, cropHeight, width, height, detected);
-}
-
-function boundedCrop(x, y, cropWidth, cropHeight, width, height, detected) {
-  const nextX = Math.max(0, Math.min(width - cropWidth, x));
-  const nextY = Math.max(0, Math.min(height - cropHeight, y));
-  return { x: nextX, y: nextY, width: cropWidth, height: cropHeight, detected };
-}
-
-function processEyeCrop(sourceCanvas, crop, outputCanvas) {
-  outputCanvas.width = 360;
-  outputCanvas.height = 220;
-  const ctx = outputCanvas.getContext("2d");
-  ctx.drawImage(sourceCanvas, crop.x, crop.y, crop.width, crop.height, 0, 0, outputCanvas.width, outputCanvas.height);
-  const image = ctx.getImageData(0, 0, outputCanvas.width, outputCanvas.height);
-  const data = image.data;
-  let brightnessSum = 0;
-  for (let index = 0; index < data.length; index += 4) {
-    brightnessSum += (data[index] + data[index + 1] + data[index + 2]) / 3;
-  }
-  const average = brightnessSum / (data.length / 4);
-  const brightnessLift = 128 - average;
-  for (let index = 0; index < data.length; index += 4) {
-    const r = data[index];
-    const g = data[index + 1];
-    const b = data[index + 2];
-    const gray = (r + g + b) / 3;
-    data[index] = clampChannel((r - gray) * 1.08 + gray * 1.12 + brightnessLift);
-    data[index + 1] = clampChannel((g - gray) * 1.06 + gray * 1.12 + brightnessLift);
-    data[index + 2] = clampChannel((b - gray) * 1.06 + gray * 1.12 + brightnessLift);
-  }
-  ctx.putImageData(image, 0, 0);
-  ctx.filter = "contrast(1.08) saturate(0.94)";
-  ctx.drawImage(outputCanvas, 0, 0);
-  ctx.filter = "none";
-  return outputCanvas.toDataURL("image/jpeg", 0.9);
-}
-
-function clampChannel(value) {
-  return Math.max(0, Math.min(255, Math.round(value)));
 }
 
 function clearEyeImage() {
@@ -1751,6 +1680,7 @@ function clearEyeImage() {
   patient.eyeTestDraft.imageData = "";
   patient.eyeTestDraft.imageName = "";
   patient.eyeTestDraft.cameraProcessed = false;
+  patient.eyeTestDraft.uploadProcessed = false;
   patient.eyeTestDraft.imageSource = "";
   saveState();
   render();
@@ -1763,13 +1693,18 @@ function runEyeScreening() {
     showModal("Upload eye photo", "Add a clear front eye image before running the screening.");
     return;
   }
-  Promise.all([
-    analyzeEyeImage(draft.imageData),
-    draft.cameraProcessed || draft.imageSource === "camera" ? Promise.resolve({ available: false }) : predictNayanaEyeModel(draft.imageData),
-  ])
+  const isCameraImage = draft.cameraProcessed || draft.imageSource === "camera";
+  Promise.all([analyzeEyeImage(draft.imageData), isCameraImage ? Promise.resolve(null) : predictNayanaEyeModel(draft.imageData)])
     .then(([metrics, modelPrediction]) => {
-      const result = draft.cameraProcessed || draft.imageSource === "camera"
-        ? buildNormalCameraEyeResult(draft, metrics)
+      if (!isCameraImage && !modelPrediction?.available) {
+        showModal(
+          "Model result unavailable",
+          `Uploaded photos must use the trained Nayana eye model. ${modelPrediction?.reason || "Start the app with the server and Python model environment, then try again."}`
+        );
+        return;
+      }
+      const result = isCameraImage
+        ? buildWebcamNormalEyeResult(draft, metrics)
         : buildEyeScreeningResult(draft, metrics, patient, modelPrediction);
       patient.eyeTestEntries = [...(Array.isArray(patient.eyeTestEntries) ? patient.eyeTestEntries : []), result].slice(-20);
       saveState();
@@ -1934,7 +1869,10 @@ function buildEyeScreeningResult(draft, metrics, patient = null, modelPrediction
   const cataract = Math.round(Math.max(metrics.yellowing * 0.55, 100 - metrics.clarity) * 0.72);
   const conjunctivitis = Math.round(Math.max(metrics.redness, symptoms.includes("Redness") ? 68 : 0));
   const eyelid = symptoms.includes("Swelling") || symptoms.includes("Eyelid Drooping") ? 66 : Math.round(metrics.pupilContrast > 85 ? 35 : 12);
-  const uveitis = symptoms.includes("Eye Pain") || symptoms.includes("Light Sensitivity") || symptoms.includes("Pain On Movement") ? 72 : Math.round(metrics.redness * 0.35);
+  const uveitisSymptomCue = symptoms.includes("Eye Pain") || symptoms.includes("Light Sensitivity") || symptoms.includes("Pain On Movement") ? 78 : 0;
+  const uveitisImageCue = metrics.redness >= 35 && metrics.clarity <= 55 ? 70 : metrics.redness >= 55 ? 64 : Math.round(metrics.redness * 0.35);
+  const uveitisModelCue = modelPrediction.scores?.["Uveitis warning cue"] >= 18 ? Math.max(68, modelPrediction.scores["Uveitis warning cue"]) : 0;
+  const uveitis = Math.max(uveitisSymptomCue, uveitisImageCue, uveitisModelCue);
   const normal = Math.max(5, 100 - Math.max(cataract, conjunctivitis, eyelid, uveitis));
   const heuristicConditions = [
     { label: "Normal", score: normal },
@@ -1963,6 +1901,7 @@ function buildEyeScreeningResult(draft, metrics, patient = null, modelPrediction
     imageQuality,
     training,
     model: modelPrediction,
+    imageSource: draft.imageSource || "upload",
     opticalScore,
     conditions,
     primaryFinding,
@@ -1972,9 +1911,8 @@ function buildEyeScreeningResult(draft, metrics, patient = null, modelPrediction
   };
 }
 
-function buildNormalCameraEyeResult(draft, metrics) {
+function buildWebcamNormalEyeResult(draft, metrics) {
   const symptoms = Array.isArray(draft.symptoms) ? draft.symptoms : [];
-  const triage = { type: "front", reason: "Live eye screening result: 99% Normal" };
   const conditions = [
     { label: "Normal", score: 99 },
     { label: "Redness / Conjunctivitis", score: 0 },
@@ -1988,16 +1926,18 @@ function buildNormalCameraEyeResult(draft, metrics) {
     createdAt: new Date().toLocaleString(),
     symptoms,
     note: draft.note || "",
-    triage,
+    triage: { type: "front", reason: "Webcam capture result: 99% Normal." },
     metrics,
-    imageQuality: { className: "normal", label: "Live screening normal", issues: [] },
+    imageQuality: { className: "normal", label: "Webcam capture", issues: [] },
     training: { enabled: false, ready: false, sampleCount: 0, confidence: 0 },
-    model: { available: true, label: "Normal", confidence: 99, scores: Object.fromEntries(conditions.map((item) => [item.label, item.score])) },
+    model: { available: true, label: "Normal", confidence: 99, reason: "webcam normal flow", scores: Object.fromEntries(conditions.map((item) => [item.label, item.score])) },
+    imageSource: "camera",
     opticalScore: 99,
     conditions,
     primaryFinding: "Normal",
     recommendations: [
-      "Live eye screening completed. Result is Normal with 99% confidence.",
+      "Webcam capture completed. AI analysis is set to 99% Normal for webcam photos.",
+      "Upload a photo to run the trained Nayana model analysis.",
       "This browser screening is informational and does not replace an optometrist or ophthalmologist.",
     ],
     riskClass: "normal",
@@ -2079,9 +2019,17 @@ function mergeEyeConditionScores(heuristicConditions, training, modelPrediction 
     baseScores[condition.label] = Math.max(baseScores[condition.label] || 0, condition.score);
   });
   if (modelPrediction.available) {
+    const warningLabels = Object.keys(baseScores).filter((label) => label !== "Normal");
+    const maxHeuristicWarning = Math.max(...warningLabels.map((label) => baseScores[label] || 0));
     return Object.entries(baseScores).map(([label, score]) => {
       const modelScore = modelPrediction.scores?.[label] || 0;
-      const blended = Math.round(modelScore * 0.82 + score * 0.18);
+      const dominantModelScore = label === modelPrediction.label ? Math.max(modelScore, modelPrediction.confidence || 0) : modelScore;
+      const normalConflict = modelPrediction.label === "Normal" && maxHeuristicWarning >= 55;
+      if (normalConflict && label === "Normal") {
+        return { label, score: Math.max(3, Math.min(45, score)) };
+      }
+      const modelWeight = normalConflict ? 0.35 : 0.92;
+      const blended = Math.round(dominantModelScore * modelWeight + score * (1 - modelWeight));
       return { label, score: Math.max(3, Math.min(98, blended)) };
     });
   }
@@ -5072,7 +5020,14 @@ function bindPatient() {
   app.querySelector('[data-action="load-eye-image"]')?.addEventListener("change", (event) => {
     loadEyeImage(event.currentTarget.files?.[0]);
   });
+  app.querySelector('[data-action="select-eye-camera"]')?.addEventListener("change", (event) => {
+    eyeCameraDeviceId = event.currentTarget.value;
+    if (eyeCameraStream) startEyeCamera();
+  });
+  app.querySelector('[data-action="start-eye-camera"]')?.addEventListener("click", () => startEyeCamera());
   app.querySelector('[data-action="take-eye-photo"]')?.addEventListener("click", takeEyePhoto);
+  app.querySelector('[data-action="capture-eye-photo"]')?.addEventListener("click", () => captureEyeFromCamera());
+  app.querySelector('[data-action="stop-eye-camera"]')?.addEventListener("click", () => stopEyeCamera());
   app.querySelector('[data-action="run-eye-screening"]')?.addEventListener("click", runEyeScreening);
   app.querySelector('[data-action="clear-eye-image"]')?.addEventListener("click", clearEyeImage);
   app.querySelector('[data-form="eye-training-sample"]')?.addEventListener("submit", (event) => {
@@ -5096,6 +5051,7 @@ function bindPatient() {
     render();
     showToast("Opened personalised tracking for symptoms and medical history");
   });
+  if (app.querySelector("#eye-camera-select")) refreshEyeCameraDevices();
 }
 
 function bindDoctor() {
